@@ -90,7 +90,7 @@ claude mcp add cs2 -- node <repo-path>\mcp-server\dist\index.js
 
 Start the game, load a save, then ask Claude: "How are my city's finances?", "Zone a residential area by the river", "Build a road connecting the industrial area to the highway".
 
-## Tool Reference (51 tools)
+## Tool Reference (52 tools)
 
 **State & view**
 
@@ -115,6 +115,7 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 | `cs2_gridmap` | Native cell-map layers: land value, ground/air/noise pollution, ground water |
 | `cs2_zoning` | Zoning summary (occupied/empty per zone type) |
 | `cs2_notifications` | All in-world warning icons (no power/water, abandoned...) with target entities |
+| `cs2_traffic` | City-wide traffic flow, worst roads (flow %, volume, four daily periods) and traffic bottlenecks, with the game's own numbers |
 | `cs2_inspect` | Single-entity detail (residents/employees/status flags) |
 
 **Construction**

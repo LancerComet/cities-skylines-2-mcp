@@ -151,6 +151,8 @@ namespace CS2MCP
                     return ListMapTiles(request);
                 case "/city/tiles/buy":
                     return BuyMapTiles(request);
+                case "/city/traffic":
+                    return CityTraffic(request);
                 default:
                     return BridgeResponse.Error(404,
                         $"unknown endpoint: {request.Path}; available: /ping /state /city/overview /city/demand " +

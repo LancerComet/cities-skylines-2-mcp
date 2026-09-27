@@ -1209,6 +1209,39 @@ server.registerTool(
   },
 );
 
+server.registerTool(
+  "cs2_traffic",
+  {
+    title: "Traffic report",
+    description:
+      "Traffic diagnostics with the game's own numbers: the city-wide traffic flow (as the traffic info view " +
+      "shows it), the roads with the lowest flow (0-100% per road like the road info panel, with volume and the " +
+      "four daily periods) and every lane the game flags as a traffic bottleneck, grouped by road or intersection. " +
+      "Filter spatially with x/z/radius. Use before and after road or transit changes to measure their effect; " +
+      "values update 32 times per in-game day, so let the simulation run between checks.",
+    inputSchema: {
+      x: z.number().optional().describe("Center X for spatial filter"),
+      z: z.number().optional().describe("Center Z for spatial filter"),
+      radius: z.number().optional().describe("Radius in meters for spatial filter (default 1000)"),
+      limit: z.number().int().min(1).max(200).optional().describe("How many worst roads to list (default 25)"),
+      minVolume: z.number().min(0).optional().describe("Ignore roads with less volume than this when ranking (default 1)"),
+    },
+  },
+  async ({ x, z: zCoord, radius, limit, minVolume }) => {
+    const params = new URLSearchParams();
+    if (x !== undefined) params.set("x", String(x));
+    if (zCoord !== undefined) params.set("z", String(zCoord));
+    if (radius !== undefined) params.set("radius", String(radius));
+    if (limit) params.set("limit", String(limit));
+    if (minVolume !== undefined) params.set("minVolume", String(minVolume));
+    try {
+      return jsonResult(await bridgeJson(`/city/traffic?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
 console.error(`cs2-mcp 0.8.0 running on stdio (bridge: ${BRIDGE_URL})`);
