@@ -90,7 +90,7 @@ claude mcp add cs2 -- node <repo-path>\mcp-server\dist\index.js
 
 Start the game, load a save, then ask Claude: "How are my city's finances?", "Zone a residential area by the river", "Build a road connecting the industrial area to the highway".
 
-## Tool Reference (55 tools)
+## Tool Reference (60 tools)
 
 **State & view**
 
@@ -116,6 +116,8 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 | `cs2_zoning` | Zoning summary (occupied/empty per zone type) |
 | `cs2_notifications` | All in-world warning icons (no power/water, abandoned...) with target entities |
 | `cs2_traffic` | City-wide traffic flow, worst roads (flow %, volume, four daily periods) and traffic bottlenecks, with the game's own numbers |
+| `cs2_vehicles` | Census of driving vehicles by type and destination, what stopped vehicles wait for, the queue heads holding traffic up and any gridlock loops |
+| `cs2_road_graph` | Road segments of an area with their junctions, direction, flow and traffic lights (optionally every network, incl. station tracks) |
 | `cs2_inspect` | Single-entity detail (residents/employees/status flags) |
 
 **Construction**
@@ -127,6 +129,9 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 | `cs2_build_road` | Any network segment: straight / curved via `cx,cz` / elevated via `e1,e2` (bridges, ramps) |
 | `cs2_upgrade_road` | Road upgrades: grass/trees/wide sidewalk/sound barrier/parking/lighting/median |
 | `cs2_replace_road` | Change the road type of existing segments in place (the road tool's Replace mode): widen a highway, make a street one-way |
+| `cs2_connect_road` | Build a road or track whose ends snap to existing junctions or split existing segments (like the road tool's snapping), optionally raised or lowered |
+| `cs2_prefab_info` | Footprint, size, placement rules and cost of a building, or width and layers of a network |
+| `cs2_place_shoreline` | Place a harbor, pump or other shoreline building on the water's edge, snapped like the game's placement tool |
 | `cs2_zone_area` / `cs2_list_zones` | Paint zoning (`None` to clear) and list zone types |
 | `cs2_demolish` | Demolish buildings/segments/trees/districts (bulldozer pipeline) |
 | `cs2_list_buildings` / `cs2_list_roads` / `cs2_list_objects` | Entity listings (ids, coordinates) |
