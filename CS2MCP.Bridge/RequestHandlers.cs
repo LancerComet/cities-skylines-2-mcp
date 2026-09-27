@@ -137,6 +137,20 @@ namespace CS2MCP
                     return SetDistrictPolicy(request);
                 case "/screenshot":
                     return Screenshot(request);
+                case "/transit/stops":
+                    return ListTransitStops(request);
+                case "/transit/stops/place":
+                    return PlaceTransitStop(request);
+                case "/transit/lines":
+                    return ListTransitLines(request);
+                case "/transit/lines/create":
+                    return CreateTransitLine(request);
+                case "/transit/lines/delete":
+                    return DeleteTransitLine(request);
+                case "/city/tiles/list":
+                    return ListMapTiles(request);
+                case "/city/tiles/buy":
+                    return BuyMapTiles(request);
                 default:
                     return BridgeResponse.Error(404,
                         $"unknown endpoint: {request.Path}; available: /ping /state /city/overview /city/demand " +

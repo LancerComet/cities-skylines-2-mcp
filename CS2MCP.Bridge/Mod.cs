@@ -7,7 +7,7 @@ namespace CS2MCP
     public sealed class Mod : IMod
     {
         public const string Name = "CS2MCP";
-        public const string Version = "0.8.2";
+        public const string Version = "0.9.0";
 
         public static readonly ILog Log = LogManager.GetLogger(Name).SetShowsErrorsInUI(false);
 
@@ -16,6 +16,7 @@ namespace CS2MCP
             Log.Info($"{Name} {Version} loading, registering bridge systems");
             updateSystem.UpdateAt<BridgeSystem>(SystemUpdatePhase.UIUpdate);
             updateSystem.UpdateAt<BridgeToolSystem>(SystemUpdatePhase.ToolUpdate);
+            updateSystem.UpdateAt<BridgeTransitToolSystem>(SystemUpdatePhase.ToolUpdate);
         }
 
         public void OnDispose()

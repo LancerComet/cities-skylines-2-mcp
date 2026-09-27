@@ -90,7 +90,7 @@ claude mcp add cs2 -- node <repo-path>\mcp-server\dist\index.js
 
 Start the game, load a save, then ask Claude: "How are my city's finances?", "Zone a residential area by the river", "Build a road connecting the industrial area to the highway".
 
-## Tool Reference (44 tools)
+## Tool Reference (51 tools)
 
 **State & view**
 
@@ -141,6 +141,17 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 | `cs2_list_districts` / `cs2_create_district` | List districts / draw a district polygon |
 | `cs2_district_policies` / `cs2_set_district_policy` | District policies |
 | `cs2_tiles_info` | Owned map tiles / upkeep info |
+| `cs2_list_map_tiles` / `cs2_buy_map_tiles` | List tiles (ownership, natural features, permits left) / buy tiles through the game's own purchase logic (price, permits and funds checked by the game) |
+
+**Public transport**
+
+| Tool | Description |
+|---|---|
+| `cs2_list_transit_stops` | Stops with type, name, position, owning station, attached road and the lines serving them |
+| `cs2_place_transit_stop` | Place a roadside bus/tram stop via the object tool pipeline (attached, snapped and validated by the game) |
+| `cs2_create_transit_line` | Line through ordered stops (ids, station buildings or points snapped to stops) via the route tool pipeline; waits for the game's pathfinding and refuses unreachable segments |
+| `cs2_list_transit_lines` | Lines with the transportation panel's numbers (stops, vehicles, passengers on board, usage, length, schedule) and optional per-stop waiting passengers |
+| `cs2_delete_transit_line` | Delete a line exactly like the game's own delete button |
 
 **Time & meta**
 
@@ -159,7 +170,8 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 
 ## Known Limitations / Roadmap
 
-- Map tile purchasing, transit line planning and terraforming are not implemented yet (planned for v0.9)
+- Terraforming is not implemented yet
+- Transit: stops can be placed for bus/tram (roadside); train/metro stops are station buildings (place with `cs2_place_building`) that must be connected by tracks. Lines only get vehicles when a depot of the same type exists and the simulation runs
 - Ramps can only connect at segment endpoints (nodes); mid-segment smooth merges are not supported yet
 - Screenshots capture the game's current rendering: with a road-tool panel open the game renders roads in white outline mode
 
