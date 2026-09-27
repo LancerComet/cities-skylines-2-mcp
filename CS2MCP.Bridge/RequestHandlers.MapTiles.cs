@@ -272,10 +272,12 @@ namespace CS2MCP
             }
 
             var bought = new List<object>();
+            var boughtTiles = new List<Entity>();
             foreach (Entity tile in tiles)
             {
                 if (!EntityManager.HasComponent<Game.Common.Native>(tile))
                 {
+                    boughtTiles.Add(tile);
                     Geometry geometry = EntityManager.GetComponentData<Geometry>(tile);
                     bought.Add(new
                     {
@@ -291,6 +293,10 @@ namespace CS2MCP
                 return BridgeResponse.Error(409,
                     "purchase refused by the game: " + DescribeTilePurchaseStatus(status, permitsBefore, moneyBefore, quotedCost, tiles.Count));
             }
+
+            // UnlockTile flagged the tiles from this (UI) phase, too late for this
+            // frame's border redraw; re-flag them at the start of the next frame.
+            World.GetOrCreateSystemManaged<BridgeMapTileRefreshSystem>().Enqueue(boughtTiles);
 
             return BridgeResponse.Json(new
             {
