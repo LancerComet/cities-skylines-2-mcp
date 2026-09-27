@@ -1242,6 +1242,95 @@ server.registerTool(
   },
 );
 
+server.registerTool(
+  "cs2_replace_road",
+  {
+    title: "Replace road type",
+    description:
+      "Change the road type of existing segments in place, like the road tool's Replace mode: e.g. widen a " +
+      "highway (Highway Oneway - 2 lanes -> 3 lanes) or turn a street into a one-way one. The game regenerates " +
+      "the segments, lanes and zone blocks and validates the result (a wider road can remove buildings it " +
+      "overlaps). invert=true flips the drawing direction, which sets the direction of one-way roads. Segment " +
+      "ids change; the new ids are returned by position.",
+    inputSchema: {
+      roads: z
+        .array(z.object({ index: z.number().int(), version: z.number().int() }))
+        .min(1)
+        .max(50)
+        .describe("Road segments to replace (from cs2_list_roads or cs2_traffic)"),
+      prefab: z.string().describe("New road prefab name (cs2_find_prefabs category road)"),
+      invert: z.boolean().optional().describe("Flip the drawing direction (one-way roads then run the other way)"),
+      force: z.boolean().optional().describe("Use the prefab even if it is milestone-locked"),
+    },
+  },
+  async ({ roads, prefab, invert, force }) => {
+    const params = new URLSearchParams({
+      roads: roads.map((r) => `${r.index}:${r.version}`).join(";"),
+      prefab,
+    });
+    if (invert !== undefined) params.set("invert", String(invert));
+    if (force) params.set("force", "true");
+    try {
+      return jsonResult(await bridgeJson(`/build/road/replace?${bridgeQueryString(params)}`, 15_000));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_line_policies",
+  {
+    title: "Transit line policies",
+    description:
+      "Policies available for one transit line (ticket price, vehicle count and similar options from the line " +
+      "panel) with active state, current adjustment and slider range.",
+    inputSchema: {
+      index: z.number().int().describe("Line entity index (cs2_list_transit_lines)"),
+      version: z.number().int().describe("Line entity version"),
+    },
+  },
+  async ({ index, version }) => {
+    const params = new URLSearchParams({ index: String(index), version: String(version) });
+    try {
+      return jsonResult(await bridgeJson(`/transit/lines/policies?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_set_line_policy",
+  {
+    title: "Set transit line policy",
+    description:
+      "Activate/deactivate a policy on one transit line (name from cs2_line_policies), e.g. the ticket price or " +
+      "vehicle count slider, the same way the line panel does.",
+    inputSchema: {
+      index: z.number().int().describe("Line entity index"),
+      version: z.number().int().describe("Line entity version"),
+      name: z.string().describe("Policy internal name"),
+      active: z.boolean().describe("true to activate"),
+      adjustment: z.number().optional().describe("Slider value for slider policies"),
+    },
+  },
+  async ({ index, version, name, active, adjustment }) => {
+    const params = new URLSearchParams({
+      index: String(index),
+      version: String(version),
+      name,
+      active: String(active),
+    });
+    if (adjustment !== undefined) params.set("adjustment", String(adjustment));
+    try {
+      return jsonResult(await bridgeJson(`/transit/lines/policies/set?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
 console.error(`cs2-mcp 0.8.0 running on stdio (bridge: ${BRIDGE_URL})`);

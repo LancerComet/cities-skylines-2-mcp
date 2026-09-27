@@ -153,6 +153,12 @@ namespace CS2MCP
                     return BuyMapTiles(request);
                 case "/city/traffic":
                     return CityTraffic(request);
+                case "/build/road/replace":
+                    return ReplaceRoad(request);
+                case "/transit/lines/policies":
+                    return ListLinePolicies(request);
+                case "/transit/lines/policies/set":
+                    return SetLinePolicy(request);
                 default:
                     return BridgeResponse.Error(404,
                         $"unknown endpoint: {request.Path}; available: /ping /state /city/overview /city/demand " +

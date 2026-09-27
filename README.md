@@ -90,7 +90,7 @@ claude mcp add cs2 -- node <repo-path>\mcp-server\dist\index.js
 
 Start the game, load a save, then ask Claude: "How are my city's finances?", "Zone a residential area by the river", "Build a road connecting the industrial area to the highway".
 
-## Tool Reference (52 tools)
+## Tool Reference (55 tools)
 
 **State & view**
 
@@ -126,6 +126,7 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 | `cs2_place_building` | Place buildings/trees (terrain-sampled height, rotation, native validation) |
 | `cs2_build_road` | Any network segment: straight / curved via `cx,cz` / elevated via `e1,e2` (bridges, ramps) |
 | `cs2_upgrade_road` | Road upgrades: grass/trees/wide sidewalk/sound barrier/parking/lighting/median |
+| `cs2_replace_road` | Change the road type of existing segments in place (the road tool's Replace mode): widen a highway, make a street one-way |
 | `cs2_zone_area` / `cs2_list_zones` | Paint zoning (`None` to clear) and list zone types |
 | `cs2_demolish` | Demolish buildings/segments/trees/districts (bulldozer pipeline) |
 | `cs2_list_buildings` / `cs2_list_roads` / `cs2_list_objects` | Entity listings (ids, coordinates) |
@@ -153,6 +154,7 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 | `cs2_create_transit_line` | Line through ordered stops (ids, station buildings or points snapped to stops) via the route tool pipeline; waits for the game's pathfinding and refuses unreachable segments |
 | `cs2_list_transit_lines` | Lines with the transportation panel's numbers (stops, vehicles, passengers on board, usage, length, schedule) and optional per-stop waiting passengers |
 | `cs2_delete_transit_line` | Delete a line exactly like the game's own delete button |
+| `cs2_line_policies` / `cs2_set_line_policy` | A line's policies (ticket price, vehicle count...) and setting them like the line panel does |
 
 **Time & meta**
 
