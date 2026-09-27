@@ -973,6 +973,242 @@ server.registerTool(
   },
 );
 
+const transitType = z.enum(["bus", "tram", "metro", "train"]);
+
+/** An entity id (index+version) or a world point; the bridge takes "i:v" or "x,z" items joined by ';'. */
+const entityOrPoint = z.union([
+  z.object({ index: z.number().int(), version: z.number().int() }),
+  z.object({ x: z.number(), z: z.number() }),
+]);
+
+function joinEntityOrPoints(items: z.infer<typeof entityOrPoint>[]): string {
+  return items.map((item) => ("index" in item ? `${item.index}:${item.version}` : `${item.x},${item.z}`)).join(";");
+}
+
+/**
+ * The bridge decodes query values with Uri.UnescapeDataString, which keeps '+'
+ * literal, so spaces must go out as %20 (URLSearchParams writes '+'; a real '+'
+ * is already %2B).
+ */
+function bridgeQueryString(params: URLSearchParams): string {
+  return params.toString().replace(/\+/g, "%20");
+}
+
+server.registerTool(
+  "cs2_list_transit_stops",
+  {
+    title: "List public transport stops",
+    description:
+      "List existing transit stops (bus/tram roadside stops, train/metro station platforms) with entity id, type, " +
+      "name, position, owning station building, attached road and the lines already serving each stop. Filter by " +
+      "type and/or spatially (sorted by distance when x/z given). prefabs=true also lists placeable roadside stop " +
+      "prefabs for cs2_place_transit_stop.",
+    inputSchema: {
+      type: transitType.optional().describe("Only stops of this transport type"),
+      x: z.number().optional().describe("Center X for spatial filter"),
+      z: z.number().optional().describe("Center Z for spatial filter"),
+      radius: z.number().optional().describe("Radius in meters for spatial filter (default 500)"),
+      limit: z.number().int().min(1).max(500).optional().describe("Max results (default 100)"),
+      prefabs: z.boolean().optional().describe("Also list placeable roadside stop prefabs"),
+    },
+  },
+  async ({ type, x, z: zCoord, radius, limit, prefabs }) => {
+    const params = new URLSearchParams();
+    if (type) params.set("type", type);
+    if (x !== undefined) params.set("x", String(x));
+    if (zCoord !== undefined) params.set("z", String(zCoord));
+    if (radius !== undefined) params.set("radius", String(radius));
+    if (limit) params.set("limit", String(limit));
+    if (prefabs) params.set("prefabs", "true");
+    try {
+      return jsonResult(await bridgeJson(`/transit/stops?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_place_transit_stop",
+  {
+    title: "Place a bus/tram stop on a road",
+    description:
+      "Place a roadside bus or tram stop at the road nearest to (x, z), on the side of the road where the point is " +
+      "(or on a specific road segment via road). Runs through the game's object tool pipeline: the game attaches " +
+      "the stop to the road, snaps it to the curb, validates it (sidewalk, lanes, overlap, money) and charges the " +
+      "normal cost. Train/metro stops are station buildings: use cs2_place_building for those. Returns the new " +
+      "stop's entity id for cs2_create_transit_line. The road segment is regenerated, so its id may change.",
+    inputSchema: {
+      type: z.enum(["bus", "tram"]).describe("Stop type"),
+      x: z.number().describe("World X of a point beside the road (meters)"),
+      z: z.number().describe("World Z of a point beside the road (meters)"),
+      road: z
+        .object({ index: z.number().int(), version: z.number().int() })
+        .optional()
+        .describe("Force a specific road segment (from cs2_list_roads) instead of the nearest suitable one"),
+      radius: z.number().min(4).max(200).optional().describe("Road search radius in meters (default 40)"),
+      prefab: z.string().optional().describe("Exact stop prefab name (see cs2_list_transit_stops prefabs=true)"),
+      force: z.boolean().optional().describe("Place even if the stop prefab is milestone-locked"),
+    },
+  },
+  async ({ type, x, z: zCoord, road, radius, prefab, force }) => {
+    const params = new URLSearchParams({ type, x: String(x), z: String(zCoord) });
+    if (road) params.set("road", `${road.index}:${road.version}`);
+    if (radius !== undefined) params.set("radius", String(radius));
+    if (prefab) params.set("prefab", prefab);
+    if (force) params.set("force", "true");
+    try {
+      return jsonResult(await bridgeJson(`/transit/stops/place?${bridgeQueryString(params)}`, 15_000));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_create_transit_line",
+  {
+    title: "Create a public transport line",
+    description:
+      "Create a bus/tram/metro/train line through existing stops, in order; the line automatically loops back to " +
+      "the first stop. Each stop is a stop entity id, a station building id (its matching platform is used) or an " +
+      "{x, z} point (snaps to the nearest existing stop of that type within snapRadius). Uses the game's own route " +
+      "pipeline: it waits for the game to pathfind every segment, and fails with an explanation (e.g. 'no bus path " +
+      "from stop #2 to stop #3') instead of creating a broken line. Needs a depot of the same type for vehicles.",
+    inputSchema: {
+      type: transitType.describe("Transport type"),
+      stops: z.array(entityOrPoint).min(2).max(100).describe("Ordered stops (at least 2 different ones)"),
+      name: z.string().max(64).optional().describe("Custom line name (default: the game's 'Bus Line N')"),
+      color: z
+        .string()
+        .regex(/^#?[0-9a-fA-F]{6}$/)
+        .optional()
+        .describe("Line color as #RRGGBB (default: the game's color for this line type)"),
+      snapRadius: z.number().min(5).max(300).optional().describe("Max distance for {x, z} stops to snap (default 60m)"),
+      force: z.boolean().optional().describe("Create even if this line type is milestone-locked"),
+    },
+  },
+  async ({ type, stops, name, color, snapRadius, force }) => {
+    const params = new URLSearchParams({ type, stops: joinEntityOrPoints(stops) });
+    if (name) params.set("name", name);
+    if (color) params.set("color", color.startsWith("#") ? color : `#${color}`);
+    if (snapRadius !== undefined) params.set("snapRadius", String(snapRadius));
+    if (force) params.set("force", "true");
+    try {
+      return jsonResult(await bridgeJson(`/transit/lines/create?${bridgeQueryString(params)}`, 15_000));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_list_transit_lines",
+  {
+    title: "List public transport lines",
+    description:
+      "List transit lines with the same numbers the game's transportation panel shows: name, number, type, color, " +
+      "active/visible, day/night schedule, stop count, vehicles, passengers on board, usage (occupancy) and length. " +
+      "includeStops=true adds each stop in order with its waiting passengers. The game keeps no per-line ridership " +
+      "history; city-wide passenger series are in cs2_statistics (PassengerCountBus, ...).",
+    inputSchema: {
+      type: transitType.optional().describe("Only lines of this transport type"),
+      query: z.string().optional().describe("Case-insensitive line name substring"),
+      includeStops: z.boolean().optional().describe("Include the ordered stop list with waiting passengers"),
+      limit: z.number().int().min(1).max(200).optional().describe("Max results (default 50)"),
+    },
+  },
+  async ({ type, query, includeStops, limit }) => {
+    const params = new URLSearchParams();
+    if (type) params.set("type", type);
+    if (query) params.set("query", query);
+    if (includeStops) params.set("includeStops", "true");
+    if (limit) params.set("limit", String(limit));
+    try {
+      return jsonResult(await bridgeJson(`/transit/lines?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_delete_transit_line",
+  {
+    title: "Delete a public transport line",
+    description:
+      "Delete one transit line (from cs2_list_transit_lines) exactly like the game's own 'delete line' button. " +
+      "Its stops stay in place. Irreversible: double-check the line first.",
+    inputSchema: {
+      index: z.number().int().describe("Line entity index"),
+      version: z.number().int().describe("Line entity version"),
+    },
+  },
+  async ({ index, version }) => {
+    try {
+      return jsonResult(await bridgeJson(`/transit/lines/delete?index=${index}&version=${version}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_list_map_tiles",
+  {
+    title: "List map tiles",
+    description:
+      "List map tiles with entity id, center, bounds, owned flag and natural features (buildable land, fertile " +
+      "land, forest, oil, ore, water, fish), plus owned count, remaining tile permits and treasury. Filter by " +
+      "ownership and spatially (sorted by distance when x/z given).",
+    inputSchema: {
+      owned: z.enum(["all", "owned", "unowned"]).optional().describe("Ownership filter (default all)"),
+      x: z.number().optional().describe("Center X for spatial filter"),
+      z: z.number().optional().describe("Center Z for spatial filter"),
+      radius: z.number().optional().describe("Radius in meters for spatial filter (default 3000)"),
+      features: z.boolean().optional().describe("Include natural features per tile (default true)"),
+      limit: z.number().int().min(1).max(1000).optional().describe("Max results (default 100)"),
+    },
+  },
+  async ({ owned, x, z: zCoord, radius, features, limit }) => {
+    const params = new URLSearchParams();
+    if (owned) params.set("owned", owned);
+    if (x !== undefined) params.set("x", String(x));
+    if (zCoord !== undefined) params.set("z", String(zCoord));
+    if (radius !== undefined) params.set("radius", String(radius));
+    if (features !== undefined) params.set("features", String(features));
+    if (limit) params.set("limit", String(limit));
+    try {
+      return jsonResult(await bridgeJson(`/city/tiles/list?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_buy_map_tiles",
+  {
+    title: "Buy map tiles",
+    description:
+      "Buy one or more unowned map tiles, by tile id (cs2_list_map_tiles) or by a point inside the tile. Uses the " +
+      "game's own purchase logic (the Map Tiles panel's Purchase button): the game prices the tiles from their " +
+      "features (price rises with tiles owned), requires enough tile permits (from milestones) and money, then " +
+      "charges the treasury. Irreversible; returns the actual cost charged.",
+    inputSchema: {
+      tiles: z.array(entityOrPoint).min(1).max(50).describe("Tiles to buy: {index, version} or {x, z} inside the tile"),
+    },
+  },
+  async ({ tiles }) => {
+    const params = new URLSearchParams({ tiles: joinEntityOrPoints(tiles) });
+    try {
+      return jsonResult(await bridgeJson(`/city/tiles/buy?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
 console.error(`cs2-mcp 0.8.0 running on stdio (bridge: ${BRIDGE_URL})`);
