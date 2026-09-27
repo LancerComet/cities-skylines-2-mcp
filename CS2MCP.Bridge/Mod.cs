@@ -17,6 +17,7 @@ namespace CS2MCP
             updateSystem.UpdateAt<BridgeSystem>(SystemUpdatePhase.UIUpdate);
             updateSystem.UpdateAt<BridgeToolSystem>(SystemUpdatePhase.ToolUpdate);
             updateSystem.UpdateAt<BridgeTransitToolSystem>(SystemUpdatePhase.ToolUpdate);
+            updateSystem.UpdateAt<BridgeTransitRenameSystem>(SystemUpdatePhase.UIUpdate);
         }
 
         public void OnDispose()

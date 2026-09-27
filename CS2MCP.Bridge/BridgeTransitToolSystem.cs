@@ -222,7 +222,14 @@ namespace CS2MCP
                         applyMode = ApplyMode.None;
                         if (m_Applied)
                         {
-                            CompletePending(m_PendingKind == OperationKind.Stop ? BuildStopResponse() : BuildLineResponse());
+                            if (m_PendingKind == OperationKind.Stop)
+                            {
+                                CompletePending(BuildStopResponse());
+                            }
+                            else
+                            {
+                                FinishLine();
+                            }
                         }
                         Deactivate();
                         break;
@@ -241,7 +248,11 @@ namespace CS2MCP
             catch (Exception e)
             {
                 Mod.Log.Warn($"BridgeTransitToolSystem error in stage {m_Stage}: {e}");
-                CompletePending(BridgeResponse.Error(500, $"transit operation failed: {e.GetType().Name}: {e.Message}"));
+                string detail = $"{e.GetType().Name}: {e.Message}";
+                CompletePending(BridgeResponse.Error(500, m_Applied
+                    ? $"the game applied the transit operation, but finishing it failed ({detail}); " +
+                      "check cs2_list_transit_lines / cs2_list_transit_stops"
+                    : $"transit operation failed: {detail}"));
                 applyMode = ApplyMode.Clear;
                 Deactivate();
             }
@@ -371,18 +382,34 @@ namespace CS2MCP
             });
         }
 
-        private BridgeResponse BuildLineResponse()
+        private void FinishLine()
+        {
+            Func<string, BridgeResponse> buildResponse = PrepareLineResponse();
+            if (!string.IsNullOrEmpty(m_LineName) && IsCommitted(m_ResultEntity))
+            {
+                // NameSystem writes through EndFrameBarrier, which refuses new command
+                // buffers during the tool phase, so the rename and the reply are
+                // handed to the UI phase (where the transportation panel renames).
+                base.World.GetOrCreateSystemManaged<BridgeTransitRenameSystem>()
+                    .Enqueue(m_ResultEntity, m_LineName, m_PendingRequest, buildResponse);
+                m_PendingRequest = null;
+                return;
+            }
+            CompletePending(buildResponse(null));
+        }
+
+        /// <summary>
+        /// Captures the committed line's reply data now (Deactivate clears the
+        /// tool state). The returned builder reads the line's name when invoked,
+        /// so a rename done later in the UI phase is reflected.
+        /// </summary>
+        private Func<string, BridgeResponse> PrepareLineResponse()
         {
             Entity line = m_ResultEntity;
             if (!IsCommitted(line))
             {
-                return BridgeResponse.Error(409, "the game did not commit the line (it may have been rejected while applying)");
-            }
-            if (!string.IsNullOrEmpty(m_LineName))
-            {
-                // Same call the transportation panel uses to rename a line.
-                m_NameSystem.SetCustomName(line, m_LineName);
-                base.World.GetExistingSystemManaged<Game.UI.InGame.TransportationOverviewUISystem>()?.RequestUpdate();
+                BridgeResponse error = BridgeResponse.Error(409, "the game did not commit the line (it may have been rejected while applying)");
+                return _ => error;
             }
             int number = EntityManager.HasComponent<RouteNumber>(line)
                 ? EntityManager.GetComponentData<RouteNumber>(line).m_Number
@@ -396,21 +423,25 @@ namespace CS2MCP
                 Entity stop = m_LineStops[i].Stop;
                 stops.Add(new { order = i + 1, stop = new { index = stop.Index, version = stop.Version }, name = SafeLabel(stop) });
             }
-            return BridgeResponse.Json(new
+            string type = m_PendingTypeName;
+            string prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null;
+            int depots = m_DepotCount;
+            return nameWarning => BridgeResponse.Json(new
             {
                 created = true,
-                type = m_PendingTypeName,
-                prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null,
+                type,
+                prefab,
                 line = new { index = line.Index, version = line.Version },
                 number = number > 0 ? (int?)number : null,
                 name = SafeLabel(line),
                 color,
-                stopCount = m_LineStops.Length,
+                stopCount = stops.Count,
                 stops,
-                depotsOfThisType = m_DepotCount,
-                warning = m_DepotCount == 0
-                    ? $"no {m_PendingTypeName} depot exists: the line is valid but gets no vehicles until one is built"
+                depotsOfThisType = depots,
+                warning = depots == 0
+                    ? $"no {type} depot exists: the line is valid but gets no vehicles until one is built"
                     : null,
+                nameWarning,
                 note = "created through the game's route pipeline (definitions, pathfinding, validation, apply). " +
                        "Vehicles are dispatched only while the simulation runs. Verify with cs2_list_transit_lines.",
             });
