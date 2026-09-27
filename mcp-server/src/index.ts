@@ -1243,6 +1243,171 @@ server.registerTool(
 );
 
 server.registerTool(
+  "cs2_vehicles",
+  {
+    title: "Vehicle census and queue heads",
+    description:
+      "Every driving road vehicle (parked cars excluded) by type (personal car, taxi, bus, delivery/cargo truck, " +
+      "service...) with how many are stopped, and for an area: their destinations (outside the city, residential, " +
+      "commercial...) and what stopped vehicles wait for (vehicle ahead, red light, crossing or oncoming traffic). " +
+      "queueHeads follows each stopped vehicle's blockers to the head of its queue, so it names the junctions or " +
+      "roads actually holding traffic up and how many vehicles are stuck behind each; deadlocks lists loops of " +
+      "vehicles blocking each other (gridlock). A live snapshot: repeat it to see what persists.",
+    inputSchema: {
+      x: z.number().optional().describe("Center X for the area breakdown"),
+      z: z.number().optional().describe("Center Z for the area breakdown"),
+      radius: z.number().optional().describe("Area radius in meters (default 500)"),
+      limit: z.number().int().min(1).max(100).optional().describe("How many queue heads / deadlocks to list (default 15)"),
+    },
+  },
+  async ({ x, z: zCoord, radius, limit }) => {
+    const params = new URLSearchParams();
+    if (x !== undefined) params.set("x", String(x));
+    if (zCoord !== undefined) params.set("z", String(zCoord));
+    if (radius !== undefined) params.set("radius", String(radius));
+    if (limit) params.set("limit", String(limit));
+    try {
+      return jsonResult(await bridgeJson(`/city/vehicles?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_road_graph",
+  {
+    title: "Road graph of an area",
+    description:
+      "Road segments in an area with their junction ids (so you can see what connects to what), direction " +
+      "(one-way roads run start to end), flow and volume, plus each junction's position, number of roads and " +
+      "whether it has traffic lights or is a roundabout. Use it to plan road changes before cs2_replace_road, " +
+      "cs2_build_road or cs2_demolish.",
+    inputSchema: {
+      x: z.number().describe("Center X"),
+      z: z.number().describe("Center Z"),
+      radius: z.number().min(1).max(2000).optional().describe("Radius in meters (default 300)"),
+      limit: z.number().int().min(1).max(3000).optional().describe("Max road segments (default 400)"),
+      query: z.string().optional().describe("Only prefabs whose name contains this"),
+      allNets: z
+        .boolean()
+        .optional()
+        .describe("Include every network, not just roads: train/subway/tram tracks (incl. stations' own tracks), paths..."),
+    },
+  },
+  async ({ x, z: zCoord, radius, limit, query, allNets }) => {
+    const params = new URLSearchParams({ x: String(x), z: String(zCoord) });
+    if (radius !== undefined) params.set("radius", String(radius));
+    if (limit) params.set("limit", String(limit));
+    if (query) params.set("query", query);
+    if (allNets) params.set("nets", "all");
+    try {
+      return jsonResult(await bridgeJson(`/city/road-graph?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_connect_road",
+  {
+    title: "Build a connected road or track",
+    description:
+      "Build a road, track or other network segment whose ends join the existing network, like drawing with the " +
+      "road tool's snapping: each end snaps to the nearest junction of a compatible network within `snap` meters, " +
+      "otherwise splits the nearest compatible segment at that point (a track never joins a road). Ends with " +
+      "nothing in range start freely on the terrain. Straight, or curved through cx/cz (needed where tracks must " +
+      "leave a junction smoothly). Use for new road links and ramps, and for track spurs to station tracks (find " +
+      "those with cs2_road_graph allNets). Validated by the game; costs money like a player build.",
+    inputSchema: {
+      prefab: z.string().describe("Exact network prefab name (cs2_find_prefabs category road or net)"),
+      x1: z.number().describe("Start X"),
+      z1: z.number().describe("Start Z"),
+      x2: z.number().describe("End X"),
+      z2: z.number().describe("End Z"),
+      cx: z.number().optional().describe("Curve control point X (with cz)"),
+      cz: z.number().optional().describe("Curve control point Z"),
+      snap: z.number().min(0).max(50).optional().describe("Snap distance in meters (default 8; 0 = never snap)"),
+      e1: z.number().optional().describe("Elevation of a free (unsnapped) start in meters: >0 bridge/flyover, <0 tunnel"),
+      e2: z.number().optional().describe("Elevation of a free (unsnapped) end in meters"),
+      force: z.boolean().optional().describe("Build even if the prefab is milestone-locked"),
+    },
+  },
+  async ({ prefab, x1, z1, x2, z2, cx, cz, snap, e1, e2, force }) => {
+    const params = new URLSearchParams({
+      prefab,
+      x1: String(x1),
+      z1: String(z1),
+      x2: String(x2),
+      z2: String(z2),
+    });
+    if (cx !== undefined) params.set("cx", String(cx));
+    if (cz !== undefined) params.set("cz", String(cz));
+    if (snap !== undefined) params.set("snap", String(snap));
+    if (e1 !== undefined) params.set("e1", String(e1));
+    if (e2 !== undefined) params.set("e2", String(e2));
+    if (force) params.set("force", "true");
+    try {
+      return jsonResult(await bridgeJson(`/build/road/connect?${bridgeQueryString(params)}`, 15_000));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_prefab_info",
+  {
+    title: "Prefab dimensions and placement rules",
+    description:
+      "Footprint (lot in 8 m cells and meters), size, placement flags (e.g. Shoreline, RoadSide), placement " +
+      "offset and cost of a building prefab, or the width and layers of a network prefab. Use before placing " +
+      "large buildings such as harbors, stations and cargo terminals.",
+    inputSchema: {
+      name: z.string().describe("Exact prefab name (cs2_find_prefabs)"),
+    },
+  },
+  async ({ name }) => {
+    const params = new URLSearchParams({ name });
+    try {
+      return jsonResult(await bridgeJson(`/prefabs/info?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_place_shoreline",
+  {
+    title: "Place a building on the shore",
+    description:
+      "Place a building that must stand on the water's edge (cargo/passenger harbors, water pumps, outlets...) at " +
+      "the shoreline nearest a point, positioned and turned to face the land exactly like the game's placement " +
+      "tool snaps it (the game then validates it). dryRun=true only reports the computed position and rotation. " +
+      "Costs money like a player build.",
+    inputSchema: {
+      prefab: z.string().describe("Exact building prefab name"),
+      x: z.number().describe("X of a point on the water's edge"),
+      z: z.number().describe("Z of a point on the water's edge"),
+      dryRun: z.boolean().optional().describe("Only compute the position and rotation"),
+      force: z.boolean().optional().describe("Place even if the prefab is milestone-locked"),
+    },
+  },
+  async ({ prefab, x, z: zCoord, dryRun, force }) => {
+    const params = new URLSearchParams({ prefab, x: String(x), z: String(zCoord) });
+    if (dryRun) params.set("dryRun", "true");
+    if (force) params.set("force", "true");
+    try {
+      return jsonResult(await bridgeJson(`/build/place/shoreline?${bridgeQueryString(params)}`, 15_000));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
   "cs2_replace_road",
   {
     title: "Replace road type",
@@ -1250,8 +1415,8 @@ server.registerTool(
       "Change the road type of existing segments in place, like the road tool's Replace mode: e.g. widen a " +
       "highway (Highway Oneway - 2 lanes -> 3 lanes) or turn a street into a one-way one. The game regenerates " +
       "the segments, lanes and zone blocks and validates the result (a wider road can remove buildings it " +
-      "overlaps). invert=true flips the drawing direction, which sets the direction of one-way roads. Segment " +
-      "ids change; the new ids are returned by position.",
+      "overlaps). invert=true flips the drawing direction, which sets the direction of one-way roads. The game " +
+      "updates segments in place, so they normally keep their ids; the replaced segments are returned by position.",
     inputSchema: {
       roads: z
         .array(z.object({ index: z.number().int(), version: z.number().int() }))

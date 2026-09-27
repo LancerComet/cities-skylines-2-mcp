@@ -153,8 +153,18 @@ namespace CS2MCP
                     return BuyMapTiles(request);
                 case "/city/traffic":
                     return CityTraffic(request);
+                case "/city/vehicles":
+                    return VehicleCensus(request);
+                case "/city/road-graph":
+                    return RoadGraph(request);
                 case "/build/road/replace":
                     return ReplaceRoad(request);
+                case "/build/road/connect":
+                    return ConnectRoad(request);
+                case "/build/place/shoreline":
+                    return PlaceShoreline(request);
+                case "/prefabs/info":
+                    return PrefabInfo(request);
                 case "/transit/lines/policies":
                     return ListLinePolicies(request);
                 case "/transit/lines/policies/set":

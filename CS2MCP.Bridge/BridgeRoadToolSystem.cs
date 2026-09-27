@@ -22,10 +22,23 @@ namespace CS2MCP
     /// Invert to flip the drawing direction), and a NetCourse along the segment
     /// between its nodes. The game regenerates the segment, its lanes and zone
     /// blocks, validates the result and applies it, as for a player's replace.
+    /// Build mirrors CreateDefinitionsJob.CreateStraightLine with snapped control
+    /// points: each course end names the existing node it joins, or an existing
+    /// segment plus the split position (GetCoursePos), so the new piece is
+    /// connected like one drawn with the road tool's snapping.
     /// Runs for three tool frames: definitions, validate and apply, finish.
     /// </summary>
     public sealed partial class BridgeRoadToolSystem : ObjectToolBaseSystem
     {
+        /// <summary>One end of a built segment: an existing node, a split point on an existing segment, or a free point.</summary>
+        public struct BuildEnd
+        {
+            public Entity Entity;
+            public float Split;
+            public float3 Position;
+            public float Elevation;
+        }
+
         private enum Stage
         {
             Idle,
@@ -34,7 +47,17 @@ namespace CS2MCP
             Finish,
         }
 
+        private enum Mode
+        {
+            Replace,
+            Build,
+        }
+
         private Stage m_Stage = Stage.Idle;
+        private Mode m_Mode;
+        private BuildEnd m_BuildStart;
+        private BuildEnd m_BuildEnd;
+        private Bezier4x3 m_BuildCurve;
         private Entity[] m_PendingEdges;
         private float3[] m_PendingMidpoints;
         private bool m_PendingInvert;
@@ -104,11 +127,38 @@ namespace CS2MCP
             m_PendingInvert = invert;
             m_PendingRequest = request;
             m_Applied = false;
+            m_Mode = Mode.Replace;
             m_Stage = Stage.CreateDefinitions;
             m_PreviousTool = m_ToolSystem.activeTool;
             m_ToolSystem.activeTool = this;
             return true;
         }
+
+        /// <summary>Must be called on the simulation thread. The curve must start at start.Position and end at end.Position.</summary>
+        public bool TryQueueBuild(Entity prefabEntity, PrefabBase prefab, BuildEnd start, BuildEnd end, Bezier4x3 curve, BridgeRequest request)
+        {
+            if (m_Stage != Stage.Idle)
+            {
+                return false;
+            }
+            m_BuildStart = start;
+            m_BuildEnd = end;
+            m_BuildCurve = curve;
+            m_PendingEdges = null;
+            m_PendingMidpoints = null;
+            m_PendingPrefabEntity = prefabEntity;
+            m_PendingPrefab = prefab;
+            m_PendingInvert = false;
+            m_PendingRequest = request;
+            m_Applied = false;
+            m_Mode = Mode.Build;
+            m_Stage = Stage.CreateDefinitions;
+            m_PreviousTool = m_ToolSystem.activeTool;
+            m_ToolSystem.activeTool = this;
+            return true;
+        }
+
+        private string OperationName => m_Mode == Mode.Build ? "building the connection" : "road replacement";
 
         [Preserve]
         protected override JobHandle OnUpdate(JobHandle inputDeps)
@@ -119,7 +169,14 @@ namespace CS2MCP
                 {
                     case Stage.CreateDefinitions:
                         applyMode = ApplyMode.Clear;
-                        CreateReplaceDefinitions();
+                        if (m_Mode == Mode.Build)
+                        {
+                            CreateBuildDefinitions();
+                        }
+                        else
+                        {
+                            CreateReplaceDefinitions();
+                        }
                         m_Stage = Stage.Apply;
                         break;
 
@@ -134,7 +191,7 @@ namespace CS2MCP
                             List<string> errors = CollectTempErrors();
                             applyMode = ApplyMode.Clear;
                             CompletePending(BridgeResponse.Error(409,
-                                "road replacement blocked by game validation (" +
+                                OperationName + " blocked by game validation (" +
                                 (errors.Count > 0 ? string.Join(", ", errors) : "overlap, unsupported road type, protected segment...") +
                                 "); nothing was changed"));
                         }
@@ -145,7 +202,7 @@ namespace CS2MCP
                         applyMode = ApplyMode.None;
                         if (m_Applied)
                         {
-                            CompletePending(BuildReplaceResponse());
+                            CompletePending(m_Mode == Mode.Build ? BuildConnectResponse() : BuildReplaceResponse());
                         }
                         Deactivate();
                         break;
@@ -166,8 +223,8 @@ namespace CS2MCP
                 Mod.Log.Warn($"BridgeRoadToolSystem error in stage {m_Stage}: {e}");
                 string detail = $"{e.GetType().Name}: {e.Message}";
                 CompletePending(BridgeResponse.Error(500, m_Applied
-                    ? $"the game applied the replacement, but finishing it failed ({detail}); check cs2_list_roads"
-                    : $"road replacement failed: {detail}"));
+                    ? $"the game applied the change, but finishing {OperationName} failed ({detail}); check cs2_list_roads"
+                    : $"{OperationName} failed: {detail}"));
                 applyMode = ApplyMode.Clear;
                 Deactivate();
             }
@@ -182,7 +239,7 @@ namespace CS2MCP
                 // Another tool took over mid-operation; fail fast instead of
                 // letting the HTTP call time out.
                 CompletePending(BridgeResponse.Error(409,
-                    "road replacement interrupted because another tool became active; check cs2_list_roads before retrying"));
+                    OperationName + " interrupted because another tool became active; check cs2_list_roads before retrying"));
                 m_Stage = Stage.Idle;
                 m_PendingEdges = null;
                 m_PendingPrefab = null;
@@ -240,6 +297,141 @@ namespace CS2MCP
             }
         }
 
+        /// <summary>
+        /// Mirrors NetToolSystem.CreateDefinitionsJob.CreateStraightLine: one
+        /// course whose ends reference the snapped node or segment (GetCoursePos:
+        /// m_Entity = node, or segment + m_SplitPosition to split it there).
+        /// </summary>
+        private void CreateBuildDefinitions()
+        {
+            NetCourse course = default;
+            course.m_Curve = m_BuildCurve;
+            course.m_Length = MathUtils.Length(m_BuildCurve);
+            course.m_FixedIndex = -1;
+            course.m_Elevation = new float2(math.min(m_BuildStart.Elevation, m_BuildEnd.Elevation),
+                math.max(m_BuildStart.Elevation, m_BuildEnd.Elevation));
+            course.m_StartPosition = ToCoursePos(m_BuildStart, 0f);
+            course.m_StartPosition.m_Flags = CoursePosFlags.IsFirst | CoursePosFlags.IsLeft | CoursePosFlags.IsRight;
+            course.m_EndPosition = ToCoursePos(m_BuildEnd, 1f);
+            course.m_EndPosition.m_Flags = CoursePosFlags.IsLast | CoursePosFlags.IsLeft | CoursePosFlags.IsRight;
+            // Raised or lowered free ends keep their height (as cs2_build_road's elevated ends do).
+            if (m_BuildStart.Entity == Entity.Null && m_BuildStart.Elevation != 0f)
+            {
+                course.m_StartPosition.m_Flags |= CoursePosFlags.FreeHeight;
+            }
+            if (m_BuildEnd.Entity == Entity.Null && m_BuildEnd.Elevation != 0f)
+            {
+                course.m_EndPosition.m_Flags |= CoursePosFlags.FreeHeight;
+            }
+
+            Unity.Mathematics.Random random = RandomSeed.Next().GetRandom(0);
+            EntityCommandBuffer commandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
+            Entity entity = commandBuffer.CreateEntity();
+            commandBuffer.AddComponent(entity, new CreationDefinition
+            {
+                m_Prefab = m_PendingPrefabEntity,
+                m_RandomSeed = random.NextInt(),
+                m_Flags = CreationFlags.SubElevation,
+            });
+            commandBuffer.AddComponent(entity, default(Updated));
+            commandBuffer.AddComponent(entity, course);
+        }
+
+        private CoursePos ToCoursePos(BuildEnd end, float courseDelta)
+        {
+            return new CoursePos
+            {
+                m_Entity = end.Entity,
+                m_SplitPosition = end.Split,
+                m_Position = end.Position,
+                m_Elevation = end.Elevation,
+                m_Rotation = NetUtils.GetNodeRotation(MathUtils.Tangent(m_BuildCurve, courseDelta)),
+                m_CourseDelta = courseDelta,
+                m_ParentMesh = -1,
+            };
+        }
+
+        private BridgeResponse BuildConnectResponse()
+        {
+            // Segments of the new prefab lying along the course (the game may
+            // split it where it crosses other networks).
+            var segments = new List<object>();
+            var nodes = new List<Entity>();
+            Bezier4x2 course = m_BuildCurve.xz;
+            using (NativeArray<Entity> edges = m_EdgeQuery.ToEntityArray(Allocator.Temp))
+            using (NativeArray<Curve> curves = m_EdgeQuery.ToComponentDataArray<Curve>(Allocator.Temp))
+            using (NativeArray<PrefabRef> prefabs = m_EdgeQuery.ToComponentDataArray<PrefabRef>(Allocator.Temp))
+            {
+                for (int i = 0; i < edges.Length; i++)
+                {
+                    if (prefabs[i].m_Prefab != m_PendingPrefabEntity)
+                    {
+                        continue;
+                    }
+                    Bezier4x3 bezier = curves[i].m_Bezier;
+                    if (MathUtils.Distance(course, bezier.a.xz, out _) > 2f || MathUtils.Distance(course, bezier.d.xz, out _) > 2f
+                        || MathUtils.Distance(course, MathUtils.Position(bezier, 0.5f).xz, out _) > 2f)
+                    {
+                        continue;
+                    }
+                    Edge ends = EntityManager.GetComponentData<Edge>(edges[i]);
+                    nodes.Add(ends.m_Start);
+                    nodes.Add(ends.m_End);
+                    segments.Add(new
+                    {
+                        road = new { index = edges[i].Index, version = edges[i].Version },
+                        startNode = ends.m_Start.Index,
+                        endNode = ends.m_End.Index,
+                        start = new { x = bezier.a.x, y = bezier.a.y, z = bezier.a.z },
+                        end = new { x = bezier.d.x, y = bezier.d.y, z = bezier.d.z },
+                        length = curves[i].m_Length,
+                    });
+                }
+            }
+            return BridgeResponse.Json(new
+            {
+                built = true,
+                prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null,
+                segments,
+                start = DescribeBuiltEnd(m_BuildStart, nodes),
+                end = DescribeBuiltEnd(m_BuildEnd, nodes),
+                note = "built through the game's road tool pipeline with snapped ends (validated by the game); " +
+                       "segmentsAtJunction > 1 means the end is joined to the existing network.",
+            });
+        }
+
+        private object DescribeBuiltEnd(BuildEnd end, List<Entity> nodes)
+        {
+            // The node now at this end (existing, or created by the split).
+            Entity node = Entity.Null;
+            float best = 1f;
+            foreach (Entity candidate in nodes)
+            {
+                if (!EntityManager.Exists(candidate) || !EntityManager.HasComponent<Node>(candidate))
+                {
+                    continue;
+                }
+                float distance = math.distance(EntityManager.GetComponentData<Node>(candidate).m_Position.xz, end.Position.xz);
+                if (distance < best)
+                {
+                    best = distance;
+                    node = candidate;
+                }
+            }
+            int connected = node != Entity.Null && EntityManager.HasBuffer<ConnectedEdge>(node)
+                ? EntityManager.GetBuffer<ConnectedEdge>(node, isReadOnly: true).Length
+                : 0;
+            string snappedTo = end.Entity == Entity.Null ? "free point"
+                : EntityManager.HasComponent<Edge>(end.Entity) ? "segment (split)" : "junction";
+            return new
+            {
+                snappedTo,
+                position = new { x = end.Position.x, y = end.Position.y, z = end.Position.z },
+                junction = node != Entity.Null ? new { index = node.Index, version = node.Version } : null,
+                segmentsAtJunction = connected,
+            };
+        }
+
         private BridgeResponse BuildReplaceResponse()
         {
             // The game recreates replaced segments, so find the new ones by position.
@@ -286,7 +478,8 @@ namespace CS2MCP
                 inverted = m_PendingInvert,
                 roads = replaced,
                 note = "replaced through the game's road tool pipeline (Replace mode: segments, lanes and zone blocks are " +
-                       "regenerated and validated by the game). Segment ids change; the new ids are listed by position.",
+                       "regenerated and validated by the game). The game updates segments in place, so they normally " +
+                       "keep their ids; the replaced segments are listed by position.",
             });
         }
 
