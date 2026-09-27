@@ -163,6 +163,10 @@ namespace CS2MCP
                     return ConnectRoad(request);
                 case "/build/place/shoreline":
                     return PlaceShoreline(request);
+                case "/build/place/roadside":
+                    return PlaceRoadside(request);
+                case "/city/buildings/near":
+                    return BuildingsNear(request);
                 case "/prefabs/info":
                     return PrefabInfo(request);
                 case "/transit/lines/policies":

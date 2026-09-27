@@ -1379,6 +1379,68 @@ server.registerTool(
 );
 
 server.registerTool(
+  "cs2_buildings_near",
+  {
+    title: "Buildings near a point",
+    description:
+      "Buildings around a point, nearest first, with kind (residential/commercial/office/industrial/park/service), " +
+      "footprint, position and the direction their front faces. Use to find free spots or the building to clear " +
+      "before placing a station or depot.",
+    inputSchema: {
+      x: z.number().describe("Center X"),
+      z: z.number().describe("Center Z"),
+      radius: z.number().min(1).max(1000).optional().describe("Radius in meters (default 100)"),
+      limit: z.number().int().min(1).max(300).optional().describe("Max results (default 40)"),
+      query: z.string().optional().describe("Only prefabs whose name contains this"),
+    },
+  },
+  async ({ x, z: zCoord, radius, limit, query }) => {
+    const params = new URLSearchParams({ x: String(x), z: String(zCoord) });
+    if (radius !== undefined) params.set("radius", String(radius));
+    if (limit) params.set("limit", String(limit));
+    if (query) params.set("query", query);
+    try {
+      return jsonResult(await bridgeJson(`/city/buildings/near?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_place_roadside",
+  {
+    title: "Place a building against a road",
+    description:
+      "Place a road-side building (station, depot, service building...) flush against a road segment, facing it: " +
+      "at curve position t (0-1) along the segment, on its left or right side as seen driving from the segment's " +
+      "start to its end. Position and rotation come from the road's geometry and the building's lot, so the front " +
+      "touches the road edge. The game validates the placement; dryRun=true only reports it.",
+    inputSchema: {
+      prefab: z.string().describe("Exact building prefab name"),
+      road: z.object({ index: z.number().int(), version: z.number().int() }).describe("Road segment (cs2_road_graph)"),
+      side: z.enum(["left", "right"]).describe("Side of the road, as seen from the segment's start"),
+      t: z.number().min(0).max(1).optional().describe("Position along the segment (default 0.5)"),
+      gap: z.number().min(0).max(50).optional().describe("Extra distance from the road edge in meters (default 0)"),
+      dryRun: z.boolean().optional().describe("Only compute the position and rotation"),
+      force: z.boolean().optional().describe("Place even if the prefab is milestone-locked"),
+    },
+  },
+  async ({ prefab, road, side, t, gap, dryRun, force }) => {
+    const params = new URLSearchParams({ prefab, road: `${road.index}:${road.version}`, side });
+    if (t !== undefined) params.set("t", String(t));
+    if (gap !== undefined) params.set("gap", String(gap));
+    if (dryRun) params.set("dryRun", "true");
+    if (force) params.set("force", "true");
+    try {
+      return jsonResult(await bridgeJson(`/build/place/roadside?${bridgeQueryString(params)}`, 15_000));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
   "cs2_place_shoreline",
   {
     title: "Place a building on the shore",

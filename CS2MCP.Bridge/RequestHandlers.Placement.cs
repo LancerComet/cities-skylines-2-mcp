@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using Game.Net;
 using Game.Objects;
 using Game.Prefabs;
 using Game.Simulation;
@@ -68,15 +70,32 @@ namespace CS2MCP
             {
                 NetData data = EntityManager.GetComponentData<NetData>(prefabEntity);
                 float? width = null;
+                float? maxSlope = null;
+                float? elevatedLength = null;
+                object segmentLength = null;
                 if (EntityManager.HasComponent<NetGeometryData>(prefabEntity))
                 {
-                    width = EntityManager.GetComponentData<NetGeometryData>(prefabEntity).m_DefaultWidth;
+                    NetGeometryData geometryData = EntityManager.GetComponentData<NetGeometryData>(prefabEntity);
+                    width = geometryData.m_DefaultWidth;
+                    maxSlope = geometryData.m_MaxSlopeSteepness;
+                    elevatedLength = geometryData.m_ElevatedLength;
+                    segmentLength = new { min = geometryData.m_EdgeLengthRange.min, max = geometryData.m_EdgeLengthRange.max };
+                }
+                object elevationRange = null;
+                if (EntityManager.HasComponent<PlaceableNetData>(prefabEntity))
+                {
+                    PlaceableNetData placeableNet = EntityManager.GetComponentData<PlaceableNetData>(prefabEntity);
+                    elevationRange = new { min = placeableNet.m_ElevationRange.min, max = placeableNet.m_ElevationRange.max };
                 }
                 network = new
                 {
                     layers = data.m_RequiredLayers.ToString(),
                     connectsTo = data.m_ConnectLayers.ToString(),
                     width,
+                    maxSlope,
+                    elevationRange,
+                    elevatedSpanLength = elevatedLength,
+                    segmentLength,
                 };
             }
             return BridgeResponse.Json(new
@@ -90,6 +109,167 @@ namespace CS2MCP
                 network,
                 note = "lot = the building's footprint in 8 m cells (x = width along its front, depth = z); " +
                        "placement flags tell where it can go (Shoreline = on the water's edge, use cs2_place_shoreline).",
+            });
+        }
+
+        /// <summary>
+        /// Place a road-side building flush against a road segment: the lot's
+        /// front touches the road edge and faces it, at curve position t on the
+        /// chosen side (left/right as seen driving from the segment's start to
+        /// its end). Places through BridgeToolSystem like cs2_place_building.
+        /// </summary>
+        private BridgeResponse PlaceRoadside(BridgeRequest request)
+        {
+            if (!TryGetCity(out _, out BridgeResponse error))
+            {
+                return error;
+            }
+            if (!request.Query.TryGetValue("prefab", out string prefabName) || string.IsNullOrEmpty(prefabName))
+            {
+                return BridgeResponse.Error(400, "provide ?prefab=<building name>");
+            }
+            if (!request.Query.TryGetValue("road", out string rawRoad) || !TryParseEntityRef(rawRoad, out Entity road)
+                || !EntityManager.Exists(road) || !EntityManager.HasComponent<Curve>(road) || !EntityManager.HasComponent<Edge>(road))
+            {
+                return BridgeResponse.Error(400, "provide ?road=index:version of a road segment (cs2_road_graph)");
+            }
+            request.Query.TryGetValue("side", out string side);
+            bool left = string.Equals(side, "left", System.StringComparison.OrdinalIgnoreCase);
+            if (!left && !string.Equals(side, "right", System.StringComparison.OrdinalIgnoreCase))
+            {
+                return BridgeResponse.Error(400, "provide ?side=left|right (as seen driving from the segment's start to its end)");
+            }
+            float t = request.TryGetFloat("t", out float rawT) ? math.clamp(rawT, 0f, 1f) : 0.5f;
+            request.TryGetFloat("gap", out float gap);
+            if (!TryFindPrefabByName(BuildingPrefabQuery, prefabName, out Entity prefabEntity, out PrefabBase prefab))
+            {
+                return BridgeResponse.Error(404, $"unknown building prefab '{prefabName}'");
+            }
+            if (IsLocked(prefabEntity) && !IsForced(request))
+            {
+                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached); pass force=true to place anyway");
+            }
+            float lotDepth = EntityManager.HasComponent<BuildingData>(prefabEntity)
+                ? EntityManager.GetComponentData<BuildingData>(prefabEntity).m_LotSize.y * 8f
+                : 16f;
+            Entity roadPrefab = EntityManager.GetComponentData<PrefabRef>(road).m_Prefab;
+            float roadWidth = EntityManager.HasComponent<NetGeometryData>(roadPrefab)
+                ? EntityManager.GetComponentData<NetGeometryData>(roadPrefab).m_DefaultWidth
+                : 16f;
+
+            Colossal.Mathematics.Bezier4x3 curve = EntityManager.GetComponentData<Curve>(road).m_Bezier;
+            float3 point = Colossal.Mathematics.MathUtils.Position(curve, t);
+            float2 tangent = math.normalizesafe(Colossal.Mathematics.MathUtils.Tangent(curve, t).xz);
+            // Left of the driving direction is (-tz, tx) in x/z.
+            float2 normal = left ? new float2(-tangent.y, tangent.x) : new float2(tangent.y, -tangent.x);
+            float distance = roadWidth * 0.5f + lotDepth * 0.5f + math.max(0f, gap);
+            float3 position = point;
+            position.xz += normal * distance;
+            TerrainHeightData terrain = World.GetOrCreateSystemManaged<TerrainSystem>().GetHeightData();
+            position.y = TerrainUtils.SampleHeight(ref terrain, position);
+            float2 facing = -normal;
+            quaternion rotation = ToolUtils.CalculateRotation(facing);
+            float rotationDegrees = math.degrees(math.atan2(facing.x, facing.y));
+
+            if (request.TryGetBool("dryRun", out bool dryRun) && dryRun)
+            {
+                return BridgeResponse.Json(new
+                {
+                    dryRun = true,
+                    prefab = prefab.name,
+                    position = new { x = position.x, y = position.y, z = position.z },
+                    rotationDegrees,
+                    lotDepth,
+                    roadWidth,
+                });
+            }
+            if (TransitToolsBusy(out error))
+            {
+                return error;
+            }
+            BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
+            if (!tool.TryQueuePlacement(prefabEntity, prefab, position, rotation, request))
+            {
+                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+            }
+            return null;
+        }
+
+        /// <summary>Buildings around a point with their footprint and what kind they are, nearest first.</summary>
+        private BridgeResponse BuildingsNear(BridgeRequest request)
+        {
+            if (!TryGetCity(out _, out BridgeResponse error))
+            {
+                return error;
+            }
+            if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z))
+            {
+                return BridgeResponse.Error(400, "provide ?x=&z= (and optionally radius, limit, query)");
+            }
+            float radius = request.TryGetFloat("radius", out float rawRadius) ? math.clamp(rawRadius, 1f, 1000f) : 100f;
+            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 300) : 40;
+            request.Query.TryGetValue("query", out string query);
+            float2 center = new float2(x, z);
+            var found = new List<(float Distance, Entity Entity, Game.Objects.Transform Transform)>();
+            using (Unity.Collections.NativeArray<Entity> buildings = PlacedBuildingQuery.ToEntityArray(Unity.Collections.Allocator.Temp))
+            {
+                foreach (Entity building in buildings)
+                {
+                    if (!EntityManager.HasComponent<Game.Objects.Transform>(building))
+                    {
+                        continue;
+                    }
+                    Game.Objects.Transform transform = EntityManager.GetComponentData<Game.Objects.Transform>(building);
+                    float distance = math.distance(transform.m_Position.xz, center);
+                    if (distance > radius)
+                    {
+                        continue;
+                    }
+                    if (!string.IsNullOrEmpty(query))
+                    {
+                        string name = PrefabNameOf(building);
+                        if (name == null || name.IndexOf(query, System.StringComparison.OrdinalIgnoreCase) < 0)
+                        {
+                            continue;
+                        }
+                    }
+                    found.Add((distance, building, transform));
+                }
+            }
+            found.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+            var items = new List<object>();
+            for (int i = 0; i < found.Count && i < limit; i++)
+            {
+                Entity building = found[i].Entity;
+                Game.Objects.Transform transform = found[i].Transform;
+                Entity prefabEntity = EntityManager.GetComponentData<PrefabRef>(building).m_Prefab;
+                int2 lot = EntityManager.HasComponent<BuildingData>(prefabEntity)
+                    ? EntityManager.GetComponentData<BuildingData>(prefabEntity).m_LotSize
+                    : default;
+                float3 forward = math.mul(transform.m_Rotation, new float3(0f, 0f, 1f));
+                string kind = EntityManager.HasComponent<Game.Buildings.ResidentialProperty>(building) ? "residential"
+                    : EntityManager.HasComponent<Game.Buildings.CommercialProperty>(building) ? "commercial"
+                    : EntityManager.HasComponent<Game.Buildings.OfficeProperty>(building) ? "office"
+                    : EntityManager.HasComponent<Game.Buildings.IndustrialProperty>(building) ? "industrial"
+                    : EntityManager.HasComponent<Game.Buildings.Park>(building) ? "park"
+                    : "service/other";
+                items.Add(new
+                {
+                    entity = new { index = building.Index, version = building.Version },
+                    prefab = PrefabNameOf(building),
+                    kind,
+                    position = new { x = transform.m_Position.x, z = transform.m_Position.z },
+                    distance = math.round(found[i].Distance),
+                    facingDegrees = math.round(math.degrees(math.atan2(forward.x, forward.z))),
+                    lotMeters = new { width = lot.x * 8, depth = lot.y * 8 },
+                });
+            }
+            return BridgeResponse.Json(new
+            {
+                area = new { x, z, radius },
+                matched = found.Count,
+                buildings = items,
+                note = "nearest first; facingDegrees = the direction the building's front (road side) points; lot = footprint.",
             });
         }
 
@@ -124,7 +304,7 @@ namespace CS2MCP
                 radius = math.length((float2)EntityManager.GetComponentData<BuildingData>(prefabEntity).m_LotSize) * 4f;
             }
             float3 offset = float3.zero;
-            PlacementFlags flags = PlacementFlags.None;
+            Game.Objects.PlacementFlags flags = Game.Objects.PlacementFlags.None;
             if (EntityManager.HasComponent<PlaceableObjectData>(prefabEntity))
             {
                 PlaceableObjectData placeable = EntityManager.GetComponentData<PlaceableObjectData>(prefabEntity);
@@ -196,7 +376,7 @@ namespace CS2MCP
                 facesLandToward = new { x = direction.x, z = direction.z },
                 waterSurfaceHeight,
                 snapRadius = radius,
-                shorelinePlacement = (flags & PlacementFlags.Shoreline) != 0,
+                shorelinePlacement = (flags & Game.Objects.PlacementFlags.Shoreline) != 0,
             };
             if (dryRun)
             {
