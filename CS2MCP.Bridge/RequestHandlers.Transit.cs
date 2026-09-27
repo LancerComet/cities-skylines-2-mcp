@@ -844,12 +844,13 @@ namespace CS2MCP
         }
 
         /// <summary>
-        /// Port of ObjectToolSystem.SnapJob.SnapSegmentAreas (snap-to-edge
-        /// branch): place the object on the road-facing edge of a buildable
-        /// composition area (sidewalk), facing the road. Among all candidate
-        /// areas, the one closest to the requested point wins, which picks the
-        /// road side. The game's AttachPositionSystem re-snaps the committed
-        /// stop onto its route lane afterwards.
+        /// Port of ObjectToolSystem.SnapJob.SnapSegmentAreas for non-building
+        /// objects: the game passes snapToEdge only for buildings, so a stop is
+        /// moved from the buildable area's (sidewalk's) centre line towards the
+        /// area's snap line, then towards the requested point within the snap
+        /// width, facing the road. Among all candidate areas, the one closest to
+        /// the requested point wins, which picks the road side. The game's
+        /// AttachPositionSystem re-snaps the committed stop onto its route lane.
         /// </summary>
         private static void SnapToSegmentAreas(Entity edge, Game.Net.Segment segment, float3 point, float objectRadius,
             NetCompositionData compositionData, DynamicBuffer<NetCompositionArea> areas,
@@ -895,10 +896,14 @@ namespace CS2MCP
                     direction = MathUtils.Left(direction);
                 }
 
-                float edgeOffset = area.m_Position.x
-                    + math.select(-area.m_Width, area.m_Width, math.dot(direction, MathUtils.Left(tangent.xz)) >= 0f) * 0.5f;
-                float3 position = MathUtils.Position(
-                    MathUtils.Lerp(segment.m_Left, segment.m_Right, edgeOffset / compositionData.m_Width + 0.5f), t);
+                float3 position = MathUtils.Position(areaCurve, t);
+                float3 snapPosition = MathUtils.Position(
+                    MathUtils.Lerp(segment.m_Left, segment.m_Right, area.m_SnapPosition.x / compositionData.m_Width + 0.5f), t);
+                float towardSnapLine = math.max(0f, math.min(area.m_Width * 0.5f,
+                    math.abs(area.m_SnapPosition.x - area.m_Position.x) + area.m_SnapWidth * 0.5f) - objectRadius);
+                float towardPoint = math.max(0f, area.m_SnapWidth * 0.5f - objectRadius);
+                position.xz += MathUtils.ClampLength(snapPosition.xz - position.xz, towardSnapLine);
+                position.xz += MathUtils.ClampLength(point.xz - position.xz, towardPoint);
                 position.y += area.m_Position.y;
 
                 float distance = math.distance(position.xz, point.xz);
