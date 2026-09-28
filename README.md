@@ -128,6 +128,7 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 | `cs2_place_building` | Place buildings/trees (terrain-sampled height, rotation, native validation) |
 | `cs2_build_road` | Any network segment: straight / curved via `cx,cz` / elevated via `e1,e2` (bridges, ramps) |
 | `cs2_upgrade_road` | Road upgrades: grass/trees/wide sidewalk/sound barrier/parking/lighting/median |
+| `cs2_set_junction_control` | Set a junction to traffic lights, no lights, an all-way stop or the game default (the intersection tools' node upgrades) |
 | `cs2_replace_road` | Change the road type of existing segments in place (the road tool's Replace mode): widen a highway, make a street one-way |
 | `cs2_connect_road` | Build a road or track whose ends snap to existing junctions or split existing segments (like the road tool's snapping), optionally raised or lowered |
 | `cs2_prefab_info` | Footprint, size, placement rules and cost of a building, or width and layers of a network |
@@ -156,12 +157,13 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 
 | Tool | Description |
 |---|---|
-| `cs2_list_transit_stops` | Stops with type, name, position, owning station, attached road and the lines serving them |
+| `cs2_list_transit_stops` | Stops with type, name, position, owning station, attached road and the lines serving them; `airplane` lists airport gates (passenger or cargo) and the map's air outside connections |
 | `cs2_place_transit_stop` | Place a roadside bus/tram stop via the object tool pipeline (attached, snapped and validated by the game) |
 | `cs2_create_transit_line` | Line through ordered stops (ids, station buildings or points snapped to stops) via the route tool pipeline; waits for the game's pathfinding and refuses unreachable segments |
 | `cs2_list_transit_lines` | Lines with the transportation panel's numbers (stops, vehicles, passengers on board, usage, length, schedule) and optional per-stop waiting passengers |
 | `cs2_delete_transit_line` | Delete a line exactly like the game's own delete button |
 | `cs2_line_policies` / `cs2_set_line_policy` | A line's policies (ticket price, vehicle count...) and setting them like the line panel does |
+| `cs2_line_vehicles` / `cs2_set_line_vehicles` | Vehicle models a line can use, with capacity, and choosing the model new vehicles use, like the line panel's vehicle selection |
 
 **Time & meta**
 

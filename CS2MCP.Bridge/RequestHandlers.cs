@@ -85,6 +85,8 @@ namespace CS2MCP
                     return BuildRoad(request);
                 case "/build/upgrade":
                     return HandleUpgradeRoad(request);
+                case "/build/junction":
+                    return SetJunctionControl(request);
                 case "/zones":
                     return GetZoneTypes();
                 case "/build/zone":
@@ -173,6 +175,10 @@ namespace CS2MCP
                     return ListLinePolicies(request);
                 case "/transit/lines/policies/set":
                     return SetLinePolicy(request);
+                case "/transit/lines/vehicles":
+                    return ListLineVehicles(request);
+                case "/transit/lines/vehicles/set":
+                    return SetLineVehicles(request);
                 default:
                     return BridgeResponse.Error(404,
                         $"unknown endpoint: {request.Path}; available: /ping /state /city/overview /city/demand " +
