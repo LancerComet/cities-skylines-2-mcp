@@ -42,6 +42,7 @@ namespace CS2MCP
             Demolish,
             Upgrade,
             Area,
+            NodeUpgrade,
         }
 
         private Stage m_Stage = Stage.Idle;
@@ -139,6 +140,26 @@ namespace CS2MCP
             return true;
         }
 
+        /// <summary>
+        /// Must be called on the simulation thread. Replaces a junction's upgrade
+        /// flags (traffic lights, all-way stop...) with finalFlags, as the game's
+        /// intersection tools do.
+        /// </summary>
+        public bool TryQueueNodeUpgrade(Entity node, string label, CompositionFlags finalFlags, BridgeRequest request)
+        {
+            if (m_Stage != Stage.Idle)
+            {
+                return false;
+            }
+            m_PendingKind = OperationKind.NodeUpgrade;
+            m_PendingTarget = node;
+            m_PendingLabel = label;
+            m_PendingUpgradeFlags = finalFlags;
+            m_PendingRequest = request;
+            Activate();
+            return true;
+        }
+
         /// <summary>Must be called on the simulation thread.</summary>
         public bool TryQueueDemolish(Entity target, string label, BridgeRequest request)
         {
@@ -203,6 +224,9 @@ namespace CS2MCP
                             case OperationKind.Area:
                                 CreateAreaDefinitions();
                                 break;
+                            case OperationKind.NodeUpgrade:
+                                CreateNodeUpgradeDefinition();
+                                break;
                         }
                         m_Stage = Stage.Apply;
                         break;
@@ -262,6 +286,14 @@ namespace CS2MCP
                         prefab = m_PendingLabel,
                         entity = new { index = m_PendingTarget.Index, version = m_PendingTarget.Version },
                         note = "upgrade applied via the tool pipeline; the segment is recreated with the new composition",
+                    });
+                case OperationKind.NodeUpgrade:
+                    return BridgeResponse.Json(new
+                    {
+                        upgraded = true,
+                        junction = new { index = m_PendingTarget.Index, version = m_PendingTarget.Version },
+                        mode = m_PendingLabel,
+                        note = "junction upgrade applied via the tool pipeline",
                     });
                 case OperationKind.Net:
                     return BridgeResponse.Json(new
@@ -390,6 +422,65 @@ namespace CS2MCP
             }
 
             commandBuffer.AddComponent(e, definition);
+        }
+
+        /// <summary>
+        /// Junction upgrade definition, mirroring NetToolSystem.CreateDefinitionsJob
+        /// .CreateUpgrade for a node control point: CreationDefinition on the node
+        /// (SubElevation | Align, plus Upgrade | Parent when flags change), the new
+        /// Upgraded flags and a zero-length NetCourse at the node.
+        /// </summary>
+        private void CreateNodeUpgradeDefinition()
+        {
+            Entity node = m_PendingTarget;
+            CompositionFlags oldFlags = EntityManager.HasComponent<Game.Net.Upgraded>(node)
+                ? EntityManager.GetComponentData<Game.Net.Upgraded>(node).m_Flags
+                : default;
+            CompositionFlags newFlags = m_PendingUpgradeFlags;
+
+            var definition = new CreationDefinition
+            {
+                m_Original = node,
+                m_Prefab = EntityManager.GetComponentData<PrefabRef>(node).m_Prefab,
+                m_Flags = CreationFlags.SubElevation | CreationFlags.Align,
+            };
+            if (newFlags != oldFlags)
+            {
+                definition.m_Flags |= CreationFlags.Upgrade | CreationFlags.Parent;
+            }
+
+            float3 position = EntityManager.GetComponentData<Game.Net.Node>(node).m_Position;
+            float elevation = EntityManager.HasComponent<Game.Net.Elevation>(node)
+                ? math.cmin(EntityManager.GetComponentData<Game.Net.Elevation>(node).m_Elevation)
+                : 0f;
+            NetCourse course = default;
+            course.m_Curve = new Bezier4x3(position, position, position, position);
+            course.m_Length = 0f;
+            course.m_FixedIndex = -1;
+            course.m_StartPosition = NodeCoursePos(node, position, elevation, 0f, CoursePosFlags.IsFirst);
+            course.m_EndPosition = NodeCoursePos(node, position, elevation, 1f, CoursePosFlags.IsLast);
+
+            EntityCommandBuffer commandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
+            Entity e = commandBuffer.CreateEntity();
+            commandBuffer.AddComponent(e, definition);
+            commandBuffer.AddComponent(e, new Game.Net.Upgraded { m_Flags = newFlags });
+            commandBuffer.AddComponent(e, default(Updated));
+            commandBuffer.AddComponent(e, course);
+        }
+
+        private static CoursePos NodeCoursePos(Entity node, float3 position, float elevation, float delta, CoursePosFlags flags)
+        {
+            return new CoursePos
+            {
+                m_Entity = node,
+                m_Position = position,
+                m_Rotation = NetUtils.GetNodeRotation(float3.zero),
+                m_Elevation = new float2(elevation),
+                m_CourseDelta = delta,
+                m_SplitPosition = 0f,
+                m_Flags = flags,
+                m_ParentMesh = -1,
+            };
         }
 
         /// <summary>

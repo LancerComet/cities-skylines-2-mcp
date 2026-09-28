@@ -28,6 +28,10 @@ namespace CS2MCP
                 ["metro"] = TransportType.Subway,
                 ["subway"] = TransportType.Subway,
                 ["train"] = TransportType.Train,
+                // Listing only: airport gates and the map's air connections. Flights are run by
+                // the game itself, so airplane lines and stops cannot be created.
+                ["airplane"] = TransportType.Airplane,
+                ["air"] = TransportType.Airplane,
             };
 
         private EntityQuery m_TransitStopQuery;
@@ -317,6 +321,7 @@ namespace CS2MCP
                 type = TransitTypeName(stopData.m_TransportType),
                 passenger = stopData.m_PassengerTransport,
                 cargo = stopData.m_CargoTransport,
+                outsideConnection = EntityManager.HasComponent<Game.Objects.OutsideConnection>(stop),
                 name = LabelOf(names, stop),
                 prefab = PrefabNameOf(stop),
                 position = new { x = transform.m_Position.x, y = transform.m_Position.y, z = transform.m_Position.z },
@@ -371,6 +376,10 @@ namespace CS2MCP
             if (!TryParseTransitType(rawType, out TransportType type, out string typeName, out error))
             {
                 return error;
+            }
+            if (type == TransportType.Airplane)
+            {
+                return BridgeResponse.Error(400, "airplane gates belong to airport buildings; place an airport with cs2_place_roadside");
             }
             if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z))
             {
@@ -539,6 +548,10 @@ namespace CS2MCP
             if (!TryParseTransitType(rawType, out TransportType type, out string typeName, out error))
             {
                 return error;
+            }
+            if (type == TransportType.Airplane)
+            {
+                return BridgeResponse.Error(400, "airplane routes cannot be drawn: airports fly to the map's air connections by themselves");
             }
             if (!request.Query.TryGetValue("stops", out string rawStops) || string.IsNullOrEmpty(rawStops))
             {
@@ -1207,7 +1220,7 @@ namespace CS2MCP
             typeName = null;
             if (!kTransitTypes.TryGetValue(raw.Trim(), out type))
             {
-                error = BridgeResponse.Error(400, $"unknown transit type '{raw}'; use bus, tram, metro (subway) or train");
+                error = BridgeResponse.Error(400, $"unknown transit type '{raw}'; use bus, tram, metro (subway), train or airplane (listing only)");
                 return false;
             }
             typeName = TransitTypeName(type);

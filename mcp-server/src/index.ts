@@ -1004,7 +1004,7 @@ server.registerTool(
       "type and/or spatially (sorted by distance when x/z given). prefabs=true also lists placeable roadside stop " +
       "prefabs for cs2_place_transit_stop.",
     inputSchema: {
-      type: transitType.optional().describe("Only stops of this transport type"),
+      type: z.enum(["bus", "tram", "metro", "train", "airplane"]).optional().describe("Only stops of this transport type; airplane lists airport gates (passenger or cargo) and the map's air outside connections"),
       x: z.number().optional().describe("Center X for spatial filter"),
       z: z.number().optional().describe("Center Z for spatial filter"),
       radius: z.number().optional().describe("Radius in meters for spatial filter (default 500)"),
@@ -1552,6 +1552,84 @@ server.registerTool(
     if (adjustment !== undefined) params.set("adjustment", String(adjustment));
     try {
       return jsonResult(await bridgeJson(`/transit/lines/policies/set?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_set_junction_control",
+  {
+    title: "Set junction traffic control",
+    description:
+      "Set how one road junction (node id from cs2_road_graph) is controlled, like the game's intersection " +
+      "tools: lights = traffic lights, nolights = remove traffic lights, stop = all-way stop, default = the " +
+      "game's automatic choice. Needs a junction of 3 or more roads. Save first: this recreates the junction.",
+    inputSchema: {
+      index: z.number().int().describe("Junction (node) entity index"),
+      version: z.number().int().describe("Junction (node) entity version"),
+      mode: z.enum(["lights", "nolights", "stop", "default"]).describe("Control to apply"),
+    },
+  },
+  async ({ index, version, mode }) => {
+    const params = new URLSearchParams({ index: String(index), version: String(version), mode });
+    try {
+      return jsonResult(await bridgeJson(`/build/junction?${bridgeQueryString(params)}`, 15_000));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_line_vehicles",
+  {
+    title: "Transit line vehicle models",
+    description:
+      "Vehicle models a transit line can use (the line panel's vehicle selection): the models currently chosen " +
+      "and every candidate for the line's transport type with passenger capacity, role (engine, carriage, " +
+      "multipleUnit or vehicle), max speed and the carriages an engine pulls.",
+    inputSchema: {
+      index: z.number().int().describe("Line entity index (cs2_list_transit_lines)"),
+      version: z.number().int().describe("Line entity version"),
+    },
+  },
+  async ({ index, version }) => {
+    const params = new URLSearchParams({ index: String(index), version: String(version) });
+    try {
+      return jsonResult(await bridgeJson(`/transit/lines/vehicles?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_set_line_vehicles",
+  {
+    title: "Set transit line vehicle model",
+    description:
+      "Choose the vehicle model new vehicles on a transit line use, as the line panel's vehicle selection does: " +
+      "primary = engine or single vehicle, secondary = carriage (names from cs2_line_vehicles). clear=true goes " +
+      "back to a random model per vehicle. Vehicles already running keep their model.",
+    inputSchema: {
+      index: z.number().int().describe("Line entity index"),
+      version: z.number().int().describe("Line entity version"),
+      primary: z.string().optional().describe("Engine or single-vehicle model name"),
+      secondary: z.string().optional().describe("Carriage model name (trains)"),
+      clear: z.boolean().optional().describe("Remove the choice (random model per vehicle)"),
+      force: z.boolean().optional().describe("Allow a milestone-locked model"),
+    },
+  },
+  async ({ index, version, primary, secondary, clear, force }) => {
+    const params = new URLSearchParams({ index: String(index), version: String(version) });
+    if (primary !== undefined) params.set("primary", primary);
+    if (secondary !== undefined) params.set("secondary", secondary);
+    if (clear !== undefined) params.set("clear", String(clear));
+    if (force !== undefined) params.set("force", String(force));
+    try {
+      return jsonResult(await bridgeJson(`/transit/lines/vehicles/set?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }

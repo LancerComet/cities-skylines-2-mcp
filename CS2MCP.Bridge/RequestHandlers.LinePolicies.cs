@@ -61,8 +61,10 @@ namespace CS2MCP
             {
                 foreach (Entity entity in entities)
                 {
+                    // Route policies ("Route Vehicle Count", "Route Ticket Price") are hidden from
+                    // the city policy list but are exactly what the line panel shows, so keep them.
                     PolicyPrefab prefab = prefabSystem.GetPrefab<PolicyPrefab>(entity);
-                    if (prefab == null || prefab.m_Visibility == PolicyVisibility.HideFromPolicyList)
+                    if (prefab == null)
                     {
                         continue;
                     }
