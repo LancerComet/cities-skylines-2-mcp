@@ -65,6 +65,7 @@ The MCP server loads `mcp-server/.env` via [dotenv](https://github.com/motdotla/
 |---|---|---|---|
 | `CS2_BRIDGE_URL` | MCP server | `http://127.0.0.1:8642` | Address of the bridge mod |
 | `CS2MCP_PORT` | game process | `8642` | Bridge listen port (change both together) |
+| `CS2MCP_TOKEN` | game process **and** MCP server | *(unset)* | Optional shared secret sent as `X-CS2MCP-Token`; when set for the game, every route except `/ping` requires it. Independently, requests with an `Origin` header or a non-loopback `Host` are always rejected, and state-changing routes require POST |
 | `CS2_PATH` | build time | auto-probed | Game install folder |
 
 ## Using with Claude
