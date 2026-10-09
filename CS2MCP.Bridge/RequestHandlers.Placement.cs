@@ -28,7 +28,8 @@ namespace CS2MCP
                 return BridgeResponse.Error(400, "provide ?name=<prefab name>");
             }
             if (!TryFindPrefabByName(BuildingPrefabQuery, name, out Entity prefabEntity, out PrefabBase prefab)
-                && !TryFindPrefabByName(NetPrefabQuery, name, out prefabEntity, out prefab))
+                && !TryFindPrefabByName(NetPrefabQuery, name, out prefabEntity, out prefab)
+                && !TryFindPrefabByName(AssetStampPrefabQuery, name, out prefabEntity, out prefab))
             {
                 return BridgeResponse.Error(404, $"no building or network prefab named '{name}'");
             }
@@ -98,15 +99,29 @@ namespace CS2MCP
                     segmentLength,
                 };
             }
+            object road = prefab is RoadPrefab roadPrefab ? new {
+                roadType = roadPrefab.m_RoadType.ToString(), speedLimitRaw = roadPrefab.m_SpeedLimit,
+                zoning = roadPrefab.m_ZoneBlock != null, highwayRules = roadPrefab.m_HighwayRules,
+                automaticTrafficLights = roadPrefab.m_TrafficLights,
+                note = "native prefab speed value; generated CarLane speed and lane count must be inspected on actual roads" } : null;
+            string localizedName = null, localizedDescription = null;
+            Game.SceneFlow.GameManager.instance?.localizationManager?.activeDictionary?.TryGetValue($"Assets.NAME[{prefab.name}]", out localizedName);
+            Game.SceneFlow.GameManager.instance?.localizationManager?.activeDictionary?.TryGetValue($"Assets.DESCRIPTION[{prefab.name}]", out localizedDescription);
             return BridgeResponse.Json(new
             {
                 name = prefab.name,
+                localizedName,
+                localizedDescription,
                 type = prefab.GetType().Name,
                 locked = IsLocked(prefabEntity),
                 building,
                 geometry,
                 placement,
                 network,
+                road,
+                transport = ModEntityComponents(prefabEntity, "Game.Prefabs.Transport"),
+                utilities = DescribeUtilityPrefab(prefabEntity),
+                prefabAssembly = prefab.GetType().Assembly.GetName().Name,
                 note = "lot = the building's footprint in 8 m cells (x = width along its front, depth = z); " +
                        "placement flags tell where it can go (Shoreline = on the water's edge, use cs2_place_shoreline).",
             });
@@ -147,7 +162,7 @@ namespace CS2MCP
             }
             if (IsLocked(prefabEntity) && !IsForced(request))
             {
-                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached); pass force=true to place anyway");
+                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked; reach its native milestone/development prerequisites before placing");
             }
             float lotDepth = EntityManager.HasComponent<BuildingData>(prefabEntity)
                 ? EntityManager.GetComponentData<BuildingData>(prefabEntity).m_LotSize.y * 8f
@@ -293,7 +308,7 @@ namespace CS2MCP
             }
             if (IsLocked(prefabEntity) && !IsForced(request))
             {
-                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached); pass force=true to place anyway");
+                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked; reach its native milestone/development prerequisites before placing");
             }
             bool dryRun = request.TryGetBool("dryRun", out bool rawDryRun) && rawDryRun;
 

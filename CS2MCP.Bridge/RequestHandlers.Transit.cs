@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using Colossal.Mathematics;
@@ -28,6 +28,8 @@ namespace CS2MCP
                 ["metro"] = TransportType.Subway,
                 ["subway"] = TransportType.Subway,
                 ["train"] = TransportType.Train,
+                ["ship"] = TransportType.Ship,
+                ["ferry"] = TransportType.Ferry,
                 // Listing only: airport gates and the map's air connections. Flights are run by
                 // the game itself, so airplane lines and stops cannot be created.
                 ["airplane"] = TransportType.Airplane,
@@ -263,6 +265,7 @@ namespace CS2MCP
                        "cs2_place_transit_stop; train/metro platforms belong to station buildings (station field)",
                 stops = results,
                 placeablePrefabs = prefabs,
+                linePrefabs = wantPrefabs ? ListTransitLinePrefabs(typeFilter) : null,
             });
         }
 
@@ -321,6 +324,8 @@ namespace CS2MCP
                 type = TransitTypeName(stopData.m_TransportType),
                 passenger = stopData.m_PassengerTransport,
                 cargo = stopData.m_CargoTransport,
+                routeConnection = DescribeRouteConnection(prefab),
+                routeLane = DescribeRouteLane(stop),
                 outsideConnection = EntityManager.HasComponent<Game.Objects.OutsideConnection>(stop),
                 name = LabelOf(names, stop),
                 prefab = PrefabNameOf(stop),
@@ -394,7 +399,7 @@ namespace CS2MCP
             }
             if (IsLocked(prefabEntity) && !IsForced(request))
             {
-                return BridgeResponse.Error(409, $"stop prefab '{prefab.name}' is locked (milestone not reached); pass force=true to place anyway");
+                return BridgeResponse.Error(409, $"stop prefab '{prefab.name}' is locked; reach its native milestone/development prerequisites before placing");
             }
 
             Entity forcedRoad = Entity.Null;
@@ -487,6 +492,8 @@ namespace CS2MCP
                         stops = data.stops,
                         vehicles = data.vehicles,
                         passengersOnBoard = data.cargo,
+                        passengerCount = data.isCargo ? (object)null : data.cargo,
+                        cargoAmountRaw = data.isCargo ? (object)data.cargo : null,
                         usage = data.usage,
                         lengthMeters = data.length,
                         stopList = includeStops ? DescribeLineStops(line, names) : null,
@@ -498,7 +505,7 @@ namespace CS2MCP
             {
                 totalMatches = total,
                 returned = results.Count,
-                note = "stats come from the game's transportation panel helper: usage = passengers on board / capacity; " +
+                note = "stats come from the game's transportation panel helper: usage = carried amount / capacity. Legacy passengersOnBoard is cargo for cargo lines; use passengerCount or cargoAmountRaw, never interpret raw cargo as people or tons. " +
                        "the game keeps no per-line ridership history (city-wide PassengerCount* series: cs2_statistics). " +
                        "includeStops=true adds waiting passengers per stop.",
                 lines = results,
@@ -543,7 +550,7 @@ namespace CS2MCP
             }
             if (!request.Query.TryGetValue("type", out string rawType) || string.IsNullOrEmpty(rawType))
             {
-                return BridgeResponse.Error(400, "provide ?type=bus|tram|metro|train");
+                return BridgeResponse.Error(400, "provide ?type=bus|tram|metro|train|ship|ferry");
             }
             if (!TryParseTransitType(rawType, out TransportType type, out string typeName, out error))
             {
@@ -559,9 +566,14 @@ namespace CS2MCP
                     "provide ?stops=<ordered list separated by ';'>, each item 'index:version' (a stop, or a station building) " +
                     "or 'x,z' (snaps to the nearest existing stop); the line loops back to the first stop automatically");
             }
+            bool cargo = request.TryGetBool("cargo", out bool rawCargo) && rawCargo;
+            if (cargo && type != TransportType.Train && type != TransportType.Ship)
+            {
+                return BridgeResponse.Error(400, "货运线路仅支持铁路和航运，不能把客运线路默认为货运");
+            }
             float snapRadius = request.TryGetFloat("snapRadius", out float rawSnap) ? math.clamp(rawSnap, 5f, 300f) : 60f;
 
-            if (!TryResolveLinePrefab(type, typeName, IsForced(request), out Entity prefabEntity, out PrefabBase prefab, out error))
+            if (!TryResolveLinePrefab(type, typeName, cargo, IsForced(request), out Entity prefabEntity, out PrefabBase prefab, out error))
             {
                 return error;
             }
@@ -574,7 +586,7 @@ namespace CS2MCP
             var stops = new List<Entity>();
             for (int i = 0; i < items.Length; i++)
             {
-                if (!TryResolveLineStop(items[i].Trim(), type, typeName, snapRadius, out Entity stop, out string why))
+                if (!TryResolveLineStop(items[i].Trim(), type, typeName, cargo, snapRadius, out Entity stop, out string why))
                 {
                     return BridgeResponse.Error(400, $"stop #{i + 1} ('{items[i].Trim()}'): {why}");
                 }
@@ -955,7 +967,7 @@ namespace CS2MCP
                         continue;
                     }
                     PrefabBase candidate = prefabSystem.GetPrefab<PrefabBase>(entity);
-                    if (candidate != null)
+                    if (candidate != null && candidate.name.IndexOf("Placeholder", StringComparison.OrdinalIgnoreCase) < 0)
                     {
                         candidates.Add(new KeyValuePair<Entity, PrefabBase>(entity, candidate));
                     }
@@ -1003,7 +1015,7 @@ namespace CS2MCP
             return true;
         }
 
-        private bool TryResolveLinePrefab(TransportType type, string typeName, bool force,
+        private bool TryResolveLinePrefab(TransportType type, string typeName, bool cargo, bool force,
             out Entity prefabEntity, out PrefabBase prefab, out BridgeResponse error)
         {
             prefabEntity = Entity.Null;
@@ -1016,7 +1028,7 @@ namespace CS2MCP
                 foreach (Entity entity in entities)
                 {
                     TransportLineData data = EntityManager.GetComponentData<TransportLineData>(entity);
-                    if (data.m_TransportType != type || !data.m_PassengerTransport || data.m_CargoTransport)
+                    if (data.m_TransportType != type || (cargo ? !data.m_CargoTransport : !data.m_PassengerTransport || data.m_CargoTransport))
                     {
                         continue;
                     }
@@ -1029,7 +1041,7 @@ namespace CS2MCP
             }
             if (candidates.Count == 0)
             {
-                error = BridgeResponse.Error(404, $"no passenger {typeName} line prefab found in this game");
+                error = BridgeResponse.Error(404, $"no {(cargo ? "cargo" : "passenger")} {typeName} line prefab found in this game");
                 return false;
             }
             candidates.Sort((a, b) => string.CompareOrdinal(a.Value.name, b.Value.name));
@@ -1044,7 +1056,7 @@ namespace CS2MCP
             }
             if (!force)
             {
-                error = BridgeResponse.Error(409, $"{typeName} lines are locked (milestone not reached); pass force=true to create anyway");
+                error = BridgeResponse.Error(409, $"{typeName} line prefabs are locked; inspect linePrefabs and their native prerequisites via cs2_transit_stops prefabs=true");
                 return false;
             }
             prefabEntity = candidates[0].Key;
@@ -1052,7 +1064,7 @@ namespace CS2MCP
             return true;
         }
 
-        private bool TryResolveLineStop(string item, TransportType type, string typeName, float snapRadius,
+        private bool TryResolveLineStop(string item, TransportType type, string typeName, bool cargo, float snapRadius,
             out Entity stop, out string reason)
         {
             stop = Entity.Null;
@@ -1064,17 +1076,17 @@ namespace CS2MCP
                     reason = "entity does not exist (stale id?)";
                     return false;
                 }
-                if (IsValidLineStop(entity, type))
+                if (IsValidLineStop(entity, type, cargo))
                 {
                     stop = entity;
                     return true;
                 }
-                if (TryFindStopInStation(entity, type, out stop))
+                if (TryFindStopInStation(entity, type, cargo, out stop))
                 {
                     return true;
                 }
                 reason = EntityManager.HasComponent<Game.Routes.TransportStop>(entity)
-                    ? $"it is not a {typeName} passenger stop"
+                    ? $"it is not a {typeName} {(cargo ? "cargo" : "passenger")} stop"
                     : $"it is neither a {typeName} stop nor a station containing one";
                 return false;
             }
@@ -1087,7 +1099,7 @@ namespace CS2MCP
                 reason = "expected 'index:version' or 'x,z'";
                 return false;
             }
-            if (!TryFindNearestLineStop(type, new float2(x, z), snapRadius, out stop))
+            if (!TryFindNearestLineStop(type, cargo, new float2(x, z), snapRadius, out stop))
             {
                 reason = $"no {typeName} stop within {snapRadius:F0}m of ({x:F0}, {z:F0}); place one first with cs2_place_transit_stop";
                 return false;
@@ -1095,7 +1107,7 @@ namespace CS2MCP
             return true;
         }
 
-        private bool IsValidLineStop(Entity entity, TransportType type)
+        private bool IsValidLineStop(Entity entity, TransportType type, bool cargo)
         {
             if (!EntityManager.HasComponent<Game.Routes.TransportStop>(entity)
                 || !EntityManager.HasBuffer<Game.Routes.ConnectedRoute>(entity)
@@ -1112,16 +1124,16 @@ namespace CS2MCP
                 return false;
             }
             // RouteToolSystem.SnapJob.ValidateStop (transport type) plus
-            // ValidationHelpers.ValidateRoute (passenger line needs passenger stop).
+            // ValidationHelpers.ValidateRoute：站点必须匹配本次明确选择的客运/货运能力。
             TransportStopData data = EntityManager.GetComponentData<TransportStopData>(prefab);
-            return data.m_TransportType == type && data.m_PassengerTransport;
+            return data.m_TransportType == type && (cargo ? data.m_CargoTransport : data.m_PassengerTransport);
         }
 
         /// <summary>
         /// Like the vanilla line tool when a station building is clicked: use
         /// the building's platform/stop matching the line's transport type.
         /// </summary>
-        private bool TryFindStopInStation(Entity building, TransportType type, out Entity stop)
+        private bool TryFindStopInStation(Entity building, TransportType type, bool cargo, out Entity stop)
         {
             stop = Entity.Null;
             if (EntityManager.HasBuffer<Game.Objects.SubObject>(building))
@@ -1129,7 +1141,7 @@ namespace CS2MCP
                 DynamicBuffer<Game.Objects.SubObject> subObjects = EntityManager.GetBuffer<Game.Objects.SubObject>(building, isReadOnly: true);
                 for (int i = 0; i < subObjects.Length; i++)
                 {
-                    if (IsValidLineStop(subObjects[i].m_SubObject, type))
+                    if (IsValidLineStop(subObjects[i].m_SubObject, type, cargo))
                     {
                         stop = subObjects[i].m_SubObject;
                         return true;
@@ -1141,7 +1153,7 @@ namespace CS2MCP
             {
                 foreach (Entity candidate in stops)
                 {
-                    if (!IsValidLineStop(candidate, type))
+                    if (!IsValidLineStop(candidate, type, cargo))
                     {
                         continue;
                     }
@@ -1160,7 +1172,7 @@ namespace CS2MCP
             return false;
         }
 
-        private bool TryFindNearestLineStop(TransportType type, float2 point, float radius, out Entity stop)
+        private bool TryFindNearestLineStop(TransportType type, bool cargo, float2 point, float radius, out Entity stop)
         {
             stop = Entity.Null;
             float bestDistance = float.MaxValue;
@@ -1168,7 +1180,7 @@ namespace CS2MCP
             {
                 foreach (Entity candidate in stops)
                 {
-                    if (!IsValidLineStop(candidate, type))
+                    if (!IsValidLineStop(candidate, type, cargo))
                     {
                         continue;
                     }
@@ -1206,7 +1218,8 @@ namespace CS2MCP
             error = null;
             if (World.GetOrCreateSystemManaged<BridgeToolSystem>().IsBusy
                 || World.GetOrCreateSystemManaged<BridgeTransitToolSystem>().IsBusy
-                || World.GetOrCreateSystemManaged<BridgeRoadToolSystem>().IsBusy)
+                || World.GetOrCreateSystemManaged<BridgeRoadToolSystem>().IsBusy
+                || BridgeModToolSystem.Instance?.Busy == true)
             {
                 error = BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
                 return true;

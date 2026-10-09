@@ -208,6 +208,12 @@ namespace CS2MCP
                     start = new { x = road.Curve.a.x, z = road.Curve.a.z },
                     end = new { x = road.Curve.d.x, z = road.Curve.d.z },
                     length = road.Length,
+                    condition = EntityManager.HasComponent<NetCondition>(road.Edge)
+                        ? (object)new {
+                            worstPercent = 100f - math.cmax(EntityManager.GetComponentData<NetCondition>(road.Edge).m_Wear) * 10f,
+                            bestPercent = 100f - math.cmin(EntityManager.GetComponentData<NetCondition>(road.Edge).m_Wear) * 10f,
+                            averagePercent = 100f - math.csum(EntityManager.GetComponentData<NetCondition>(road.Edge).m_Wear) * 5f
+                        } : null,
                     flowPercent = math.round(road.Flow),
                     worstPeriodFlowPercent = math.round(math.cmin(road.Periods)),
                     flowByPeriod = new[]

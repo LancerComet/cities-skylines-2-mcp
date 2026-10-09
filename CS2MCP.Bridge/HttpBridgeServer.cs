@@ -111,6 +111,13 @@ namespace CS2MCP
                 return HandlePing();
             }
 
+            if (request.Path.StartsWith("/build/", StringComparison.Ordinal)) {
+                var memory = RuntimeMemory.Read();
+                if (!memory.constructionAllowed)
+                    return BridgeResponse.Error(409, memory.unavailableReason != null
+                        ? "内存计数器无法核验；施工/预览尚未排队。读取/ping诊断，禁止自动重试旧批次；保存和正常退出仍可用。"
+                        : "内存提交预算不足；施工/预览尚未排队。先保存并正常退出重启，读取新现场后继续，禁止自动重试旧批次。");
+            }
             m_EnqueueToMainThread(request);
             BridgeResponse response = request.WaitForResponse(MainThreadTimeoutMs);
             return response ?? BridgeResponse.Error(503,
@@ -141,6 +148,7 @@ namespace CS2MCP
                 version = Mod.Version,
                 gameMode,
                 isLoading,
+                memory = RuntimeMemory.Read(),
             });
         }
 
@@ -164,7 +172,8 @@ namespace CS2MCP
             string headerText = Encoding.ASCII.GetString(headerBytes.ToArray());
             string[] lines = headerText.Split(new[] { "\r\n" }, StringSplitOptions.None);
             string[] requestLine = lines[0].Split(' ');
-            if (requestLine.Length < 3)
+            if (requestLine.Length != 3 || (requestLine[2] != "HTTP/1.1" && requestLine[2] != "HTTP/1.0")
+                || !requestLine[1].StartsWith("/", StringComparison.Ordinal) || requestLine[1].StartsWith("//", StringComparison.Ordinal))
             {
                 return null;
             }
@@ -173,6 +182,7 @@ namespace CS2MCP
             ParseUrl(requestLine[1], request);
 
             int contentLength = 0;
+            bool hasContentLength = false;
             for (int i = 1; i < lines.Length; i++)
             {
                 int colon = lines[i].IndexOf(':');
@@ -184,8 +194,12 @@ namespace CS2MCP
                 string value = lines[i].Substring(colon + 1).Trim();
                 if (name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
                 {
-                    int.TryParse(value, out contentLength);
+                    if (hasContentLength || !int.TryParse(value, out contentLength) || contentLength < 0 || contentLength > MaxBodyBytes)
+                        return null;
+                    hasContentLength = true;
                 }
+                // This minimal server supports only length-delimited bodies.
+                if (name.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase)) return null;
             }
 
             if (contentLength > 0)
@@ -230,7 +244,7 @@ namespace CS2MCP
                 int equals = pair.IndexOf('=');
                 string key = equals < 0 ? pair : pair.Substring(0, equals);
                 string value = equals < 0 ? "" : pair.Substring(equals + 1);
-                request.Query[Uri.UnescapeDataString(key)] = Uri.UnescapeDataString(value);
+                request.Query[Uri.UnescapeDataString(key.Replace("+", " "))] = Uri.UnescapeDataString(value.Replace("+", " "));
             }
         }
 

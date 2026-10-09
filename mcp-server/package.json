@@ -1,6 +1,6 @@
 {
   "name": "cs2-mcp",
-  "version": "0.8.0",
+  "version": "0.10.0",
   "description": "MCP server for Cities: Skylines II - bridges Claude to the CS2MCP in-game mod",
   "type": "module",
   "main": "dist/index.js",
@@ -9,7 +9,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "npm run build && node --test test/*.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

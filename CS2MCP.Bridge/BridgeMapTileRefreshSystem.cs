@@ -19,7 +19,7 @@ namespace CS2MCP
     {
         private readonly List<Entity> m_Pending = new List<Entity>();
 
-        /// <summary>Must be called on the simulation thread.</summary>
+        /// <summary>在模拟线程入队；地块和分区块共用下一次 ToolUpdate 的刷新时机。</summary>
         public void Enqueue(IEnumerable<Entity> tiles)
         {
             m_Pending.AddRange(tiles);

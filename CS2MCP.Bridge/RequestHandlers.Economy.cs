@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Game.City;
+using Game.Economy;
 using Game.Prefabs;
 using Game.Simulation;
 using Unity.Collections;
@@ -65,7 +66,7 @@ namespace CS2MCP
 
             return BridgeResponse.Json(new
             {
-                note = "hourly-updated monthly rates; expense values are positive costs",
+                note = "hourly-updated monthly rates; detailed expense entries are positive costs, totalExpenses uses native signed total; balance is native net income",
                 totalIncome = budget.GetTotalIncome(),
                 totalExpenses = budget.GetTotalExpenses(),
                 totalTaxIncome = budget.GetTotalTaxIncome(),
@@ -98,10 +99,46 @@ namespace CS2MCP
             }
             return BridgeResponse.Json(new
             {
+                capturedAtUtc = DateTime.UtcNow.ToString("o"),
                 allowedRange = new { min = limits.x, max = limits.y },
                 stalenessWarning = LockStalenessWarning,
                 taxRates = areas,
+                individualRates = ReadIndividualTaxes(tax),
             });
+        }
+
+        private bool TaxResourceMatches(ResourcePrefab prefab, TaxAreaType area)
+        {
+            if (!prefab.TryGet<TaxableResource>(out var taxable)) return false;
+            return taxable.m_TaxAreas == null || taxable.m_TaxAreas.Length == 0 || Array.IndexOf(taxable.m_TaxAreas, area) >= 0;
+        }
+
+        private object ReadIndividualTaxes(TaxSystem tax)
+        {
+            var levels = new List<object>();
+            var resources = new List<object>();
+            var parameters = tax.GetTaxParameterData();
+            for (int level = 0; level <= 4; level++)
+                levels.Add(new { educationLevel = level, rate = tax.GetResidentialTaxRate(level),
+                    allowedRange = new { min = parameters.m_JobLevelTaxLimits.x, max = parameters.m_JobLevelTaxLimits.y } });
+            var prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
+            using (var query = EntityManager.CreateEntityQuery(typeof(ResourceData), typeof(TaxableResourceData)))
+            using (var entities = query.ToEntityArray(Allocator.Temp))
+                foreach (Entity entity in entities)
+                {
+                    var prefab = prefabSystem.GetPrefab<ResourcePrefab>(entity);
+                    Resource resource = EconomyUtils.GetResource(prefab.m_Resource);
+                    foreach (var area in new[] { TaxAreaType.Commercial, TaxAreaType.Industrial, TaxAreaType.Office })
+                        if (TaxResourceMatches(prefab, area))
+                        {
+                            int rate = area == TaxAreaType.Commercial ? tax.GetCommercialTaxRate(resource)
+                                : area == TaxAreaType.Office ? tax.GetOfficeTaxRate(resource) : tax.GetIndustrialTaxRate(resource);
+                            resources.Add(new { area = area.ToString(), resource = resource.ToString(), rate,
+                                allowedRange = new { min = parameters.m_ResourceTaxLimits.x, max = parameters.m_ResourceTaxLimits.y } });
+                        }
+                }
+            return new { residentialByEducation = levels, resourceRates = resources,
+                note = "税收面板相同TaxableResource类别；分项设置可能使大类基准归一化，修改后须重读全部分项。" };
         }
 
         private BridgeResponse HandleSetTax(BridgeRequest request)
@@ -113,7 +150,7 @@ namespace CS2MCP
 
             if (!request.Query.TryGetValue("area", out string areaName)
                 || !Enum.TryParse(areaName, ignoreCase: true, out TaxAreaType area)
-                || area == TaxAreaType.None)
+                || Array.IndexOf(kTaxAreas, area) < 0)
             {
                 return BridgeResponse.Error(400, "provide ?area=Residential|Commercial|Industrial|Office");
             }
@@ -123,8 +160,42 @@ namespace CS2MCP
             }
 
             TaxSystem tax = World.GetOrCreateSystemManaged<TaxSystem>();
+            bool hasEducation = request.Query.ContainsKey("educationLevel");
+            bool hasResource = request.Query.ContainsKey("resource");
+            if (hasEducation || hasResource)
+            {
+                if (hasEducation && hasResource) return BridgeResponse.Error(400, "educationLevel and resource are mutually exclusive");
+                if (hasEducation)
+                {
+                    if (area != TaxAreaType.Residential || !request.TryGetInt("educationLevel", out int level) || level < 0 || level > 4)
+                        return BridgeResponse.Error(400, "educationLevel=0..4 requires Residential");
+                    var range = tax.GetTaxParameterData().m_JobLevelTaxLimits;
+                    if (rate < range.x || rate > range.y) return BridgeResponse.Error(400, "individual residential rate outside native allowed range");
+                    tax.Readers.Complete();
+                    tax.SetResidentialTaxRate(level, rate);
+                }
+                else
+                {
+                    if (area == TaxAreaType.Residential || !Enum.TryParse(request.Query["resource"], true, out Resource resource)
+                        || resource == Resource.NoResource || !Enum.IsDefined(typeof(Resource), resource))
+                        return BridgeResponse.Error(400, "resource requires a taxable Commercial/Industrial/Office product");
+                    var prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
+                    var entity = World.GetOrCreateSystemManaged<ResourceSystem>().GetPrefab(resource);
+                    if (!prefabSystem.TryGetPrefab<ResourcePrefab>(entity, out var prefab) || !TaxResourceMatches(prefab, area))
+                        return BridgeResponse.Error(400, "resource is not taxable in this area");
+                    var range = tax.GetTaxParameterData().m_ResourceTaxLimits;
+                    if (rate < range.x || rate > range.y) return BridgeResponse.Error(400, "individual resource rate outside native allowed range");
+                    tax.Readers.Complete();
+                    if (area == TaxAreaType.Commercial) tax.SetCommercialTaxRate(resource, rate);
+                    else if (area == TaxAreaType.Industrial) tax.SetIndustrialTaxRate(resource, rate);
+                    else tax.SetOfficeTaxRate(resource, rate);
+                }
+                return GetTaxes();
+            }
             int2 limits = tax.GetTaxParameterData().m_TotalTaxLimits;
-            int applied = math.clamp(rate, limits.x, limits.y);
+            if (rate < limits.x || rate > limits.y) return BridgeResponse.Error(400, "total tax rate outside native allowed range");
+            int applied = rate;
+            tax.Readers.Complete();
             tax.SetTaxRate(area, applied);
 
             return BridgeResponse.Json(new
@@ -159,13 +230,17 @@ namespace CS2MCP
                     }
                     int budget = budgetSystem.GetServiceBudget(entity);
                     budgetSystem.GetEstimatedServiceBudget(entity, out int upkeep);
+                    // 原生计数方法接受建筑预制体；传服务类别会恒为零。
+                    int buildingCount = 0;
+                    foreach (Entity buildingPrefab in budgetSystem.GetServiceBuildings(entity))
+                        buildingCount += budgetSystem.GetNumberOfServiceBuildings(buildingPrefab);
                     services.Add(new
                     {
                         name = prefab.name,
                         budgetPercent = budget,
                         efficiencyPercent = budgetSystem.GetServiceEfficiency(entity, budget),
                         estimatedUpkeep = upkeep,
-                        buildings = budgetSystem.GetNumberOfServiceBuildings(entity),
+                        buildings = buildingCount,
                     });
                 }
             }
@@ -205,7 +280,8 @@ namespace CS2MCP
                     {
                         continue;
                     }
-                    int applied = math.clamp(percentage, 50, 150);
+                    if (percentage < 50 || percentage > 150) return BridgeResponse.Error(400, "budget percentage must be within native range 50..150");
+                    int applied = percentage;
                     budgetSystem.SetServiceBudget(entity, applied);
                     return BridgeResponse.Json(new
                     {

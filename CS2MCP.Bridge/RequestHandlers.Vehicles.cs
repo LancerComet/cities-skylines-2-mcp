@@ -37,6 +37,7 @@ namespace CS2MCP
             public int Heads;
             public readonly Dictionary<string, int> HeadBlockers = new Dictionary<string, int>();
             public readonly Dictionary<string, int> HeadTypes = new Dictionary<string, int>();
+            public readonly List<Entity> HeadEntities = new List<Entity>();
         }
 
         private sealed class DeadlockGroup
@@ -285,6 +286,7 @@ namespace CS2MCP
                         queue.Heads++;
                         Increment(queue.HeadBlockers, blockerTypes[i].ToString());
                         Increment(queue.HeadTypes, types[i]);
+                        if (queue.HeadEntities.Count < 8) queue.HeadEntities.Add(cars[i]);
                     }
                 }
 
@@ -305,6 +307,8 @@ namespace CS2MCP
                         headVehicles = q.Heads,
                         headWaitingFor = q.HeadBlockers,
                         headVehicleTypes = q.HeadTypes,
+                        headDetails = QueueHeadDetails(q.HeadEntities),
+                        headDetailsComplete = q.Heads <= q.HeadEntities.Count,
                     });
                 }
 
@@ -564,6 +568,25 @@ namespace CS2MCP
             if (EntityManager.HasComponent<Building>(target)) return "serviceOrOtherBuilding";
             if (EntityManager.HasComponent<Edge>(target) || EntityManager.HasComponent<Node>(target)) return "street";
             return "other";
+        }
+
+        private List<object> QueueHeadDetails(List<Entity> heads)
+        {
+            var result = new List<object>();
+            foreach (Entity car in heads)
+            {
+                CarCurrentLane current = EntityManager.GetComponentData<CarCurrentLane>(car);
+                Entity lane = current.m_Lane;
+                Entity blocker = EntityManager.HasComponent<Blocker>(car) ? EntityManager.GetComponentData<Blocker>(car).m_Blocker : Entity.Null;
+                Entity target = EntityManager.HasComponent<Target>(car) ? EntityManager.GetComponentData<Target>(car).m_Target : Entity.Null;
+                var position = EntityManager.GetComponentData<Game.Objects.Transform>(car).m_Position;
+                result.Add(new { vehicle = Ref(car), prefab = PrefabNameOf(car), kind = VehicleKind(car),
+                    position = new { x = position.x, y = position.y, z = position.z }, lane = Ref(lane),
+                    lanePrefab = lane == Entity.Null ? null : PrefabNameOf(lane), laneFlags = current.m_LaneFlags.ToString(),
+                    lanePositionRaw = current.m_CurvePosition.x, blocker = Ref(blocker),
+                    target = Ref(target), targetPrefab = target == Entity.Null ? null : PrefabNameOf(target), destinationKind = DestinationKind(car) });
+            }
+            return result;
         }
 
         private float3 LocationPosition(Entity location, float3 fallback)

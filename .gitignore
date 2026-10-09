@@ -7,3 +7,7 @@
 # OS
 Thumbs.db
 .DS_Store
+
+# Diagnostic test build outputs
+tests/**/bin/
+tests/**/obj/

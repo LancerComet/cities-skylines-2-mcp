@@ -43,20 +43,98 @@ namespace CS2MCP
         /// </summary>
         private bool IsLocked(Entity prefabEntity)
         {
-            return EntityManager.HasComponent<Game.Prefabs.Locked>(prefabEntity)
+            return !IsContentAvailable(prefabEntity) || EntityManager.HasComponent<Game.Prefabs.Locked>(prefabEntity)
                 && EntityManager.IsComponentEnabled<Game.Prefabs.Locked>(prefabEntity);
         }
 
         public BridgeResponse Handle(BridgeRequest request)
         {
+            if (request.TryGetBool("force", out bool forced) && forced)
+                return BridgeResponse.Error(400, "force is unsupported; use native unlock, placement and validation prerequisites");
+            if (request.Query.TryGetValue("prefab", out string selectedAsset)
+                && selectedAsset.IndexOf("Invisible", StringComparison.OrdinalIgnoreCase) >= 0
+                && (request.Path.StartsWith("/build/", StringComparison.Ordinal) || request.Path == "/transit/stops/place"))
+                return BridgeResponse.Error(400, "standalone invisible assets are prohibited; native internal building paths are not affected");
+            if (request.Path.StartsWith("/build/", StringComparison.Ordinal) || request.Path == "/transit/stops/place")
+            {
+                if (!CheckNormalModConstruction(out BridgeResponse constructionError)) return constructionError;
+                if (request.Path != "/build/mod/action" && BridgeModToolSystem.Instance?.Busy == true)
+                    return BridgeResponse.Error(409, "a native mod tool preview is active; apply/cancel that operation before other construction");
+            }
             switch (request.Path)
             {
+                case "/mods/anarchy/helpers/set":
+                    return SetAnarchyHelpers(request);
+                case "/mods/anarchy/props/refresh":
+                    return RefreshAnarchyProps();
+                case "/mods/catalog":
+                    return GetModCatalog();
+                case "/mods/operation":
+                    return BridgeResponse.Json(BridgeModToolSystem.Instance.Snapshot());
+                case "/mods/inspect":
+                    return InspectOptionalMod(request);
+                case "/mods/assets":
+                    return GetModAssets(request);
+                case "/prefabs/interchange":
+                    return GetInterchangeInfo(request);
+                case "/build/interchange/place":
+                    return PlaceInterchange(request);
+                case "/build/road-layout":
+                    return BuildRoadLayout(request);
+                case "/build/road-layout/remove":
+                    return RemoveRoadLayout(request);
+                case "/build/prop/place":
+                    return PlaceModProp(request);
+                case "/build/mod/action":
+                    return ActOptionalMod(request);
                 case "/state":
                     return GetState();
+                case "/settings/saves":
+                    return GetSaveSettings();
+                case "/settings/saves/set":
+                    return SetSaveSettings(request);
+                case "/game/content-status":
+                    return GetContentStatus();
+                case "/map/environment":
+                    return GetEnvironmentField(request);
+                case "/city/development":
+                    return GetDevelopment();
+                case "/city/development/purchase":
+                    return PurchaseDevelopment(request);
+                case "/city/events":
+                    return GetCityEvents();
+                case "/city/facilities":
+                    return GetFacilityStatus();
+                case "/city/indicators":
+                    return GetCityIndicators();
+                case "/city/building/details":
+                    return GetBuildingDetails(request);
+                case "/city/facility-parking":
+                    return GetFacilityParkingFees();
+                case "/building/parking-fee/set":
+                    return SetFacilityParkingFee(request);
+                case "/city/extractor-areas":
+                    return GetExtractorAreas(request);
+                case "/map/natural-resources":
+                    return GetNaturalResourceField(request);
+                case "/build/extractor-area/edit":
+                    return EditExtractorArea(request);
+                case "/build/building/upgrade":
+                    return UpgradeServiceBuilding(request);
+                case "/city/happiness":
+                    return GetHappinessFactors();
+                case "/entity/name/set":
+                    return SetEntityName(request);
+                case "/building/districts/set":
+                    return SetBuildingDistricts(request);
+                case "/zones/cells":
+                    return GetZoneCells(request);
                 case "/city/overview":
                     return GetCityOverview();
                 case "/city/demand":
                     return GetDemand();
+                case "/city/production":
+                    return GetProduction();
                 case "/city/budget":
                     return GetBudget();
                 case "/city/services":
@@ -81,16 +159,36 @@ namespace CS2MCP
                     return GetPrefabs(request);
                 case "/build/place":
                     return PlaceBuilding(request);
+                case "/build/building/move":
+                    return MoveBuilding(request);
+                case "/prefabs/signatures":
+                    return ListSignatureBuildings();
                 case "/build/road":
                     return BuildRoad(request);
                 case "/build/upgrade":
                     return HandleUpgradeRoad(request);
+                case "/prefabs/road-upgrades":
+                    return ListNativeRoadUpgrades(request);
+                case "/build/lane-upgrade":
+                    return ApplyNativeLaneUpgrade(request);
+                case "/build/road-service":
+                    return ApplyNativeLaneUpgrade(request, allServices: true);
                 case "/build/junction":
                     return SetJunctionControl(request);
+                case "/build/turn-restrictions":
+                    return SetTurnRestrictions(request);
                 case "/zones":
                     return GetZoneTypes();
                 case "/build/zone":
                     return ZoneArea(request);
+                case "/build/zone/tool":
+                    return UseZoneTool(request);
+                case "/build/terrain":
+                    return UseTerrainTool(request);
+                case "/tools/capabilities":
+                    return GetToolCapabilities();
+                case "/mods/anarchy/normal-construction":
+                    return SetAnarchyNormalConstruction();
                 case "/build/demolish":
                     return Demolish(request);
                 case "/city/buildings":
@@ -147,6 +245,8 @@ namespace CS2MCP
                     return ListTransitLines(request);
                 case "/transit/lines/create":
                     return CreateTransitLine(request);
+                case "/transit/overview":
+                    return GetTransportOverview();
                 case "/transit/lines/delete":
                     return DeleteTransitLine(request);
                 case "/city/tiles/list":
@@ -157,6 +257,8 @@ namespace CS2MCP
                     return CityTraffic(request);
                 case "/city/vehicles":
                     return VehicleCensus(request);
+                case "/city/pedestrians":
+                    return GetPedestrians(request);
                 case "/city/road-graph":
                     return RoadGraph(request);
                 case "/build/road/replace":
@@ -171,6 +273,8 @@ namespace CS2MCP
                     return BuildingsNear(request);
                 case "/prefabs/info":
                     return PrefabInfo(request);
+                case "/prefabs/facilities":
+                    return GetFacilityCatalog();
                 case "/transit/lines/policies":
                     return ListLinePolicies(request);
                 case "/transit/lines/policies/set":
@@ -216,6 +320,8 @@ namespace CS2MCP
                 isLoading = manager != null && manager.isGameLoading,
                 cityLoaded = inGame,
                 cityName,
+                loadedSaveGuid = inGame ? World.GetExistingSystemManaged<Game.Serialization.LoadGameSystem>()?.context.instigatorGuid.ToString() : null,
+                loadPurpose = inGame ? World.GetExistingSystemManaged<Game.Serialization.LoadGameSystem>()?.context.purpose.ToString() : null,
                 simulation,
             });
         }
@@ -273,7 +379,10 @@ namespace CS2MCP
 
             return BridgeResponse.Json(new
             {
-                note = "buildingDemand uses the game's internal 0-255 scale; companyDemand counters can exceed 255; " +
+                capturedAtUtc = DateTime.UtcNow.ToString("o"),
+                stalenessWarning = LockStalenessWarning,
+                scales = new { residentialBuildingDemand = "0..100", commercialBuildingDemand = "0..100", industrialBuildingDemand = "0..100", officeBuildingDemand = "0..100", storageBuildingDemand = "raw, not normalized", industrialAndOfficeCompanyDemand = "raw counters, not percentages" },
+                note = "Current native R/C/I/O building demand is clamped to 0..100; storage building demand and I/O company counters are not normalized percentages. " +
                        "factors are raw signed contributions (positive pushes demand up, negative down). " +
                        "Values only refresh while the simulation is running (unpause briefly for fresh numbers).",
                 residential = new
@@ -328,9 +437,14 @@ namespace CS2MCP
             SimulationSystem sim = World.GetOrCreateSystemManaged<SimulationSystem>();
             bool changed = false;
 
+            if (request.Query.ContainsKey("speed") && (!request.TryGetFloat("speed", out float checkedSpeed)
+                || (checkedSpeed != 0 && checkedSpeed != 1 && checkedSpeed != 2 && checkedSpeed != 4)))
+                return BridgeResponse.Error(400, "speed must be native paused/1x/2x/4x: 0, 1, 2 or 4");
+            if (request.Query.ContainsKey("paused") && !request.TryGetBool("paused", out _)) return BridgeResponse.Error(400, "paused must be boolean");
+
             if (request.TryGetFloat("speed", out float speed))
             {
-                sim.selectedSpeed = Mathf.Clamp(speed, 0f, 8f);
+                sim.selectedSpeed = speed;
                 changed = true;
             }
             if (request.TryGetBool("paused", out bool paused))
@@ -364,6 +478,8 @@ namespace CS2MCP
         /// </summary>
         private BridgeResponse Screenshot(BridgeRequest request)
         {
+            if (!RuntimeMemory.Read().constructionAllowed)
+                return BridgeResponse.Error(409, "截图分配余量不足或无法核实；先正常保存退出，不进行额外渲染或自动重试");
             ScreenshotRunner.Ensure().Capture(request);
             return null;
         }
@@ -374,6 +490,10 @@ namespace CS2MCP
             error = null;
 
             GameManager manager = GameManager.instance;
+            if (manager != null && manager.isGameLoading)
+            {
+                error = BridgeResponse.Error(409, "save is still loading; wait for ping isLoading=false before city operations"); return false;
+            }
             if (manager == null || manager.gameMode != GameMode.Game)
             {
                 error = BridgeResponse.Error(409, "no city loaded (in main menu or editor); load a save first");

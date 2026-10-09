@@ -126,7 +126,6 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(400, "provide ?active=true|false");
             }
-            request.TryGetFloat("adjustment", out float adjustment);
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             using (NativeArray<Entity> entities = RoutePolicyQuery.ToEntityArray(Allocator.Temp))
@@ -143,6 +142,7 @@ namespace CS2MCP
                         return BridgeResponse.Error(409, $"policy '{prefab.name}' is locked (milestone not reached)");
                     }
                     // Same call the line panel uses (applied at the end of the frame).
+                    if (!TryPolicyAdjustment(request, line, entity, out float adjustment, out error)) return error;
                     World.GetOrCreateSystemManaged<PoliciesUISystem>().SetPolicy(line, entity, active, adjustment);
                     return BridgeResponse.Json(new
                     {

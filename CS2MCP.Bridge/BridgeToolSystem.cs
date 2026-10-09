@@ -1,4 +1,5 @@
-using System;
+﻿using System;
+using System.Collections.Generic;
 using Colossal.Mathematics;
 using Game;
 using Game.City;
@@ -8,6 +9,7 @@ using Game.Prefabs;
 using Game.Simulation;
 using Game.Tools;
 using Unity.Entities;
+using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine.Scripting;
@@ -37,12 +39,19 @@ namespace CS2MCP
 
         private enum OperationKind
         {
+            RoadLayout,
+            RoadLayoutRemoval,
             Object,
             Net,
             Demolish,
             Upgrade,
             Area,
+            ExtractorAreaEdit,
             NodeUpgrade,
+            BuildingUpgrade,
+            BuildingMove,
+            Zoning,
+            Terrain,
         }
 
         private Stage m_Stage = Stage.Idle;
@@ -59,10 +68,13 @@ namespace CS2MCP
         private float3[] m_PendingAreaNodes;
         private float2 m_PendingElevations;
         private quaternion m_PendingRotation;
+        private ControlPoint m_PendingAttachedPoint;
         private BridgeRequest m_PendingRequest;
         private ToolBaseSystem m_PreviousTool;
 
         private CityConfigurationSystem m_CityConfigurationSystem;
+        private EntityQuery m_ValidationIconQuery;
+        private EntityQuery m_PreviewCostQuery;
 
         public override string toolID => "CS2MCP.Bridge";
 
@@ -73,6 +85,13 @@ namespace CS2MCP
         {
             base.OnCreate();
             m_CityConfigurationSystem = base.World.GetOrCreateSystemManaged<CityConfigurationSystem>();
+            m_ValidationIconQuery = EntityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<Game.Notifications.Icon>(),
+                ComponentType.ReadOnly<Owner>(), ComponentType.ReadOnly<PrefabRef>());
+            m_PreviewCostQuery = EntityManager.CreateEntityQuery(new EntityQueryDesc {
+                All = new[] { ComponentType.ReadOnly<Temp>() },
+                None = new[] { ComponentType.ReadOnly<Deleted>() }
+            });
         }
 
         public override PrefabBase GetPrefab()
@@ -87,13 +106,45 @@ namespace CS2MCP
         }
 
         /// <summary>Must be called on the simulation thread.</summary>
-        public bool TryQueuePlacement(Entity prefabEntity, PrefabBase prefab, float3 position, quaternion rotation, BridgeRequest request)
+        public bool TryQueuePlacement(Entity prefabEntity, PrefabBase prefab, float3 position, quaternion rotation, BridgeRequest request, ControlPoint attachedPoint = default)
         {
             if (m_Stage != Stage.Idle)
             {
                 return false;
             }
             m_PendingKind = OperationKind.Object;
+            m_PendingAttachedPoint = attachedPoint;
+            m_PendingPrefabEntity = prefabEntity;
+            m_PendingPrefab = prefab;
+            m_PendingPosition = position;
+            m_PendingRotation = rotation;
+            m_PendingRequest = request;
+            Activate();
+            return true;
+        }
+
+        /// <summary>服务扩建沿原生 ObjectToolBaseSystem 的 owner 定义、预览、校验和收费流程施工。</summary>
+        public bool TryQueueBuildingUpgrade(Entity target, Entity prefabEntity, PrefabBase prefab, float3 position, quaternion rotation, BridgeRequest request)
+        {
+            if (m_Stage != Stage.Idle) return false;
+            m_PendingKind = OperationKind.BuildingUpgrade;
+            m_PendingTarget = target;
+            m_PendingPrefabEntity = prefabEntity;
+            m_PendingPrefab = prefab;
+            m_PendingPosition = position;
+            m_PendingRotation = rotation;
+            m_PendingRequest = request;
+            Activate();
+            return true;
+        }
+
+        /// <summary>搬迁引用传给原生 original 参数，子物体及扩建由原生 Relocate 流程处理。</summary>
+        public bool TryQueueBuildingMove(Entity target, Entity prefabEntity, PrefabBase prefab, float3 position, quaternion rotation, BridgeRequest request, ControlPoint attachedPoint = default)
+        {
+            if (m_Stage != Stage.Idle) return false;
+            m_PendingKind = OperationKind.BuildingMove;
+            m_PendingAttachedPoint = attachedPoint;
+            m_PendingTarget = target;
             m_PendingPrefabEntity = prefabEntity;
             m_PendingPrefab = prefab;
             m_PendingPosition = position;
@@ -191,11 +242,43 @@ namespace CS2MCP
             return true;
         }
 
+        /// <summary>读取当前原生预览实体的错误图标，保留校验规则并提供溯源依据。</summary>
+        private List<string> CollectPlacementErrors()
+        {
+            var errors = new List<string>();
+            using (NativeArray<Entity> icons = m_ValidationIconQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity icon in icons)
+                {
+                    Entity owner = EntityManager.GetComponentData<Owner>(icon).m_Owner;
+                    if (!EntityManager.Exists(owner) || !EntityManager.HasComponent<Temp>(owner)) continue;
+                    Entity prefab = EntityManager.GetComponentData<PrefabRef>(icon).m_Prefab;
+                    if (!EntityManager.HasComponent<ToolErrorData>(prefab)) continue;
+                    string error = EntityManager.GetComponentData<ToolErrorData>(prefab).m_Error.ToString();
+                    if (!errors.Contains(error)) errors.Add(error);
+                }
+            }
+            return errors;
+        }
+
         private void Activate()
         {
             m_Stage = Stage.CreateDefinitions;
             m_PreviousTool = m_ToolSystem.activeTool;
             m_ToolSystem.activeTool = this;
+        }
+
+        /// <summary>回读原生CostSystem算好的Temp费用；不另行扣款，不用道路单价猜总价。</summary>
+        private int NativePreviewCost()
+        {
+            int total = 0;
+            using (var entities = m_PreviewCostQuery.ToEntityArray(Allocator.Temp))
+                foreach (var entity in entities)
+                {
+                    var preview = EntityManager.GetComponentData<Temp>(entity);
+                    if ((preview.m_Flags & TempFlags.Cancel) == 0) total = checked(total + preview.m_Cost);
+                }
+            return total;
         }
 
         [Preserve]
@@ -209,8 +292,25 @@ namespace CS2MCP
                         applyMode = ApplyMode.Clear;
                         switch (m_PendingKind)
                         {
+                            case OperationKind.RoadLayout:
+                                CreateRoadLayoutDefinitions();
+                                break;
+                            case OperationKind.RoadLayoutRemoval:
+                                foreach (var target in m_RoadRemovalTargets) {
+                                    m_PendingTarget = target;
+                                    CreateModifyDefinitions(CreationFlags.Delete, default);
+                                }
+                                break;
                             case OperationKind.Object:
-                                CreatePlacementDefinitions();
+                                if (m_PendingAttachedPoint.m_OriginalEntity != Entity.Null)
+                                    inputDeps = CreateRoadAttachedBuildingDefinitions(inputDeps, Entity.Null);
+                                else CreatePlacementDefinitions();
+                                break;
+                            case OperationKind.BuildingUpgrade:
+                                inputDeps = CreateBuildingUpgradeDefinitions(inputDeps);
+                                break;
+                            case OperationKind.BuildingMove:
+                                inputDeps = CreateBuildingMoveDefinitions(inputDeps);
                                 break;
                             case OperationKind.Net:
                                 CreateRoadDefinitions();
@@ -224,30 +324,82 @@ namespace CS2MCP
                             case OperationKind.Area:
                                 CreateAreaDefinitions();
                                 break;
+                            case OperationKind.ExtractorAreaEdit:
+                                CreateExtractorAreaEditDefinition();
+                                break;
                             case OperationKind.NodeUpgrade:
                                 CreateNodeUpgradeDefinition();
+                                break;
+                            case OperationKind.Zoning:
+                                CreateZoningDefinition();
+                                break;
+                            case OperationKind.Terrain:
+                                CreateTerrainDefinition();
                                 break;
                         }
                         m_Stage = Stage.Apply;
                         break;
 
                     case Stage.Apply:
-                        if (GetAllowApply())
+                        if (m_PendingKind == OperationKind.Terrain)
+                        {
+                            if (GetAllowApply()) { applyMode = ApplyMode.Apply; m_TerrainAppliedPasses++; }
+                            else { applyMode = ApplyMode.Clear; CompletePending(BridgeResponse.Error(409,
+                                "native terrain preview rejected; earlier brush passes may remain; inspect terrain before retrying",
+                                mayHaveApplied: m_TerrainAppliedPasses > 0)); }
+                            m_Stage = Stage.Finish;
+                            break;
+                        }
+                        if (m_PendingKind == OperationKind.Zoning)
+                        {
+                            ApplyZoningPreview();
+                            m_Stage = Stage.Finish;
+                            break;
+                        }
+                        // Object预览必须在原生Validation之后清除，不能因SDK传了dryRun仍实际放置和收费。
+                        if ((m_PendingKind == OperationKind.Object || m_PendingKind == OperationKind.RoadLayout || m_PendingKind == OperationKind.RoadLayoutRemoval) && m_PendingRequest != null
+                            && m_PendingRequest.TryGetBool("dryRun", out bool objectDryRun) && objectDryRun)
+                        {
+                            bool allowed = GetAllowApply();
+                            applyMode = ApplyMode.Clear;
+                            CompletePending(BridgeResponse.Json(new { dryRun = true, allowed, applied = false,
+                                prefab = m_PendingPrefab?.name, nativePreviewCost = NativePreviewCost(), errors = CollectPlacementErrors(),
+                                note = "原生对象/复合资产预览已清除，未施工、未收费；实际放置须显式dryRun=false" }));
+                        }
+                        else if (GetAllowApply())
                         {
                             applyMode = ApplyMode.Apply;
-                            CompletePending(BuildSuccessResponse());
+                            if (m_PendingKind != OperationKind.ExtractorAreaEdit && m_PendingKind != OperationKind.BuildingMove) CompletePending(BuildSuccessResponse());
                         }
                         else
                         {
                             applyMode = ApplyMode.Clear;
+                            List<string> errors = CollectPlacementErrors();
                             CompletePending(BridgeResponse.Error(409,
-                                "operation blocked by game validation (overlap, water, steep terrain, protected entity...); " +
-                                "try a different position or target"));
+                                "原生施工校验拒绝：" + (errors.Count > 0 ? string.Join(", ", errors)
+                                : "未返回具体错误图标；请核场址、地形、网络接入，不盲重放")));
                         }
                         m_Stage = Stage.Finish;
                         break;
 
                     case Stage.Finish:
+                        if (m_PendingKind == OperationKind.Terrain && m_PendingRequest != null)
+                        {
+                            if (m_TerrainAppliedPasses < m_TerrainPasses) { m_Stage = Stage.CreateDefinitions; applyMode = ApplyMode.Clear; break; }
+                            CompletePending(BridgeResponse.Json(new { applied = true, passes = m_TerrainAppliedPasses,
+                                note = "native terrain brush applied; GPU heightmap and water updates are asynchronous; resample terrain and environment after update, not proof of final target height" }));
+                        }
+                        if (m_PendingKind == OperationKind.Zoning) CompleteZoning();
+                        if (m_PendingKind == OperationKind.ExtractorAreaEdit) CompleteExtractorAreaEdit();
+                        if (m_PendingKind == OperationKind.BuildingMove && m_PendingRequest != null)
+                        {
+                            if (EntityManager.Exists(m_PendingTarget) && EntityManager.HasComponent<Transform>(m_PendingTarget)
+                                && math.distance(EntityManager.GetComponentData<Transform>(m_PendingTarget).m_Position.xz, m_PendingPosition.xz) < 1f)
+                                CompletePending(BridgeResponse.Json(new { moved = true, building = new { index = m_PendingTarget.Index, version = m_PendingTarget.Version },
+                                    prefab = m_PendingPrefab.name, position = new { x = m_PendingPosition.x, y = m_PendingPosition.y, z = m_PendingPosition.z },
+                                    note = "native Relocate applied and original position verified; inspect renters, installed upgrades, utilities and access after simulation" }));
+                            else CompletePending(BridgeResponse.Error(500, "native move application returned but original position not verified; refresh building list before any retry"));
+                        }
                         applyMode = ApplyMode.None;
                         Deactivate();
                         break;
@@ -271,6 +423,16 @@ namespace CS2MCP
         {
             switch (m_PendingKind)
             {
+                case OperationKind.RoadLayoutRemoval:
+                    return BridgeResponse.Json(new { applied = true, roads = m_RoadRemovalTargets.Length,
+                        nativePreviewCost = NativePreviewCost(),
+                        note = "整组独立道路经原生拆除预览与应用；退款由游戏计费。回读保留道路、实际删除与资金，不能重放旧实体。" });
+                case OperationKind.RoadLayout:
+                    return BridgeResponse.Json(new { applied = true, segments = m_RoadLayout.Length,
+                        nativePreviewCost = NativePreviewCost(),
+                        note = "原生道路布局应用；须回读实际曲线、车道、节点和收费，不代表已通车或运营验收。" });
+                case OperationKind.BuildingUpgrade:
+                    return BridgeResponse.Json(new { upgraded = true, building = new { index = m_PendingTarget.Index, version = m_PendingTarget.Version }, prefab = m_PendingPrefab.name, note = "native tool application accepted; verify InstalledUpgrade and actual facility capacity after simulation ticks" });
                 case OperationKind.Demolish:
                     return BridgeResponse.Json(new
                     {
@@ -340,6 +502,9 @@ namespace CS2MCP
             m_PendingRequest = null;
             m_PendingPrefab = null;
             m_PendingPrefabEntity = Entity.Null;
+            m_RoadLayout = null;
+            m_RoadRemovalTargets = null;
+            m_ZonePreview?.Clear();
             if (m_ToolSystem.activeTool == this)
             {
                 m_ToolSystem.activeTool = m_PreviousTool != null ? m_PreviousTool : m_DefaultToolSystem;
@@ -366,6 +531,10 @@ namespace CS2MCP
                 m_Original = target,
                 m_Flags = flags,
             };
+            // 独立网络必须与原生NetTool一致标记SubElevation，才能参与Essential校验、收费和退款。
+            // 资产内部附属网络仍由其母体计费，不能重复收取。
+            if (EntityManager.HasComponent<Edge>(target) && !EntityManager.HasComponent<Owner>(target))
+                definition.m_Flags |= CreationFlags.SubElevation;
             commandBuffer.AddComponent(e, default(Updated));
             if (upgrades != default(CompositionFlags))
             {
@@ -497,6 +666,7 @@ namespace CS2MCP
             {
                 m_Prefab = m_PendingPrefabEntity,
                 m_RandomSeed = random.NextInt(),
+                m_Flags = CreationFlags.SubElevation,
             });
             commandBuffer.AddComponent(e, default(Updated));
             DynamicBuffer<Game.Areas.Node> nodes = commandBuffer.AddBuffer<Game.Areas.Node>(e);
@@ -504,6 +674,11 @@ namespace CS2MCP
             {
                 nodes.Add(new Game.Areas.Node(position, float.MinValue));
             }
+            // 原生 GenerateAreasSystem 仅在首尾位置相同时设置 Complete，
+            // 并移除重复尾点；不能把未闭合的临时区域当作完成辖区应用。
+            if (m_PendingAreaNodes.Length >= 3 &&
+                !m_PendingAreaNodes[0].Equals(m_PendingAreaNodes[m_PendingAreaNodes.Length - 1]))
+                nodes.Add(new Game.Areas.Node(m_PendingAreaNodes[0], float.MinValue));
         }
 
         /// <summary>
@@ -594,7 +769,8 @@ namespace CS2MCP
                 m_Position = m_PendingPosition,
                 m_Rotation = m_PendingRotation,
             };
-            definitions.m_AttachmentPrefab = default;
+            // 与原生 ObjectTool 一样，为专门产业占位选择所属经营建筑。
+            definitions.m_AttachmentPrefab = CreateNativePlaceholderAttachment(definitions.m_RandomSeed);
             definitions.m_OwnerData = GetComponentLookup<Owner>(true);
             definitions.m_TransformData = GetComponentLookup<Transform>(true);
             definitions.m_AttachedData = GetComponentLookup<Game.Objects.Attached>(true);
@@ -646,7 +822,41 @@ namespace CS2MCP
             definitions.m_WaterSurfaceData = m_WaterSystem.GetSurfaceData(out _);
             definitions.m_TerrainHeightData = m_TerrainSystem.GetHeightData();
             definitions.m_CommandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
-            definitions.Execute();
+            try { definitions.Execute(); }
+            finally { if (definitions.m_AttachmentPrefab.IsCreated) definitions.m_AttachmentPrefab.Dispose(); }
+        }
+
+        private JobHandle CreateBuildingUpgradeDefinitions(JobHandle inputDeps)
+        {
+            var points = new NativeList<ControlPoint>(1, Allocator.TempJob);
+            points.Add(new ControlPoint { m_Position = m_PendingPosition, m_Rotation = m_PendingRotation,
+                m_ElementIndex = new int2(-1, -1) });
+            var handle = CreateDefinitions(m_PendingPrefabEntity, Entity.Null, Entity.Null, m_PendingTarget,
+                Entity.Null, Entity.Null, m_CityConfigurationSystem.defaultTheme, points, default,
+                false, m_CityConfigurationSystem.leftHandTraffic, false, false, 1f, 0f, 1f, 1f, 0.1f,
+                RandomSeed.Next(), Snap.None, AgeMask.Mature, false, default, inputDeps);
+            return points.Dispose(handle);
+        }
+
+        private JobHandle CreateBuildingMoveDefinitions(JobHandle inputDeps)
+        {
+            return CreateRoadAttachedBuildingDefinitions(inputDeps, m_PendingTarget);
+        }
+
+        /// <summary>保留道路吸附的原生控制点，交由 ObjectTool 生成 Attached 与道路子对象更新。</summary>
+        private JobHandle CreateRoadAttachedBuildingDefinitions(JobHandle inputDeps, Entity original)
+        {
+            var points = new NativeList<ControlPoint>(1, Allocator.TempJob);
+            var point = m_PendingAttachedPoint;
+            point.m_Position = m_PendingPosition;
+            point.m_Rotation = m_PendingRotation;
+            point.m_ElementIndex = new int2(-1, -1);
+            points.Add(point);
+            var handle = CreateDefinitions(m_PendingPrefabEntity, Entity.Null, Entity.Null, Entity.Null,
+                original, Entity.Null, m_CityConfigurationSystem.defaultTheme, points, default,
+                false, m_CityConfigurationSystem.leftHandTraffic, false, false, 1f, 0f, 1f, 0f, 0.1f,
+                RandomSeed.Next(), Snap.None, AgeMask.Mature, false, default, inputDeps);
+            return points.Dispose(handle);
         }
     }
 }

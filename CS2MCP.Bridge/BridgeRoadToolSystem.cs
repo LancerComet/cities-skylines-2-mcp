@@ -324,6 +324,15 @@ namespace CS2MCP
                 course.m_EndPosition.m_Flags |= CoursePosFlags.FreeHeight;
             }
 
+            // 与Anarchy 1.8 NetworkDefinitionSystem.Ground 相同：保持世界几何，
+            // 仅将定义的结构Elevation归零。仍走后续原生地形、碰撞、解锁与收费校验。
+            if (m_PendingRequest.Query.TryGetValue("composition", out string composition) && composition == "ground")
+            {
+                course.m_Elevation = float2.zero;
+                course.m_StartPosition.m_Elevation = float2.zero;
+                course.m_EndPosition.m_Elevation = float2.zero;
+            }
+
             Unity.Mathematics.Random random = RandomSeed.Next().GetRandom(0);
             EntityCommandBuffer commandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
             Entity entity = commandBuffer.CreateEntity();
@@ -339,6 +348,26 @@ namespace CS2MCP
 
         private CoursePos ToCoursePos(BuildEnd end, float courseDelta)
         {
+            int parentMesh = -1;
+            Entity owner = end.Entity;
+            // 与原生GetCoursePos一致，保留建筑/扩建端口所属网格，避免把端口当无主自由节点。
+            for (int depth = 0; depth < 16 && EntityManager.Exists(owner) && EntityManager.HasComponent<Owner>(owner)
+                && !EntityManager.HasComponent<Game.Buildings.Building>(owner) && !EntityManager.HasComponent<Game.Buildings.Extension>(owner); depth++)
+            {
+                if (EntityManager.HasComponent<LocalTransformCache>(owner))
+                    parentMesh = EntityManager.GetComponentData<LocalTransformCache>(owner).m_ParentMesh;
+                else if (EntityManager.HasComponent<Edge>(owner))
+                {
+                    var edge = EntityManager.GetComponentData<Edge>(owner);
+                    if (EntityManager.HasComponent<LocalTransformCache>(edge.m_Start) && EntityManager.HasComponent<LocalTransformCache>(edge.m_End))
+                    {
+                        int a = EntityManager.GetComponentData<LocalTransformCache>(edge.m_Start).m_ParentMesh;
+                        int b = EntityManager.GetComponentData<LocalTransformCache>(edge.m_End).m_ParentMesh;
+                        parentMesh = a == b ? a : -1;
+                    }
+                }
+                owner = EntityManager.GetComponentData<Owner>(owner).m_Owner;
+            }
             return new CoursePos
             {
                 m_Entity = end.Entity,
@@ -347,7 +376,7 @@ namespace CS2MCP
                 m_Elevation = end.Elevation,
                 m_Rotation = NetUtils.GetNodeRotation(MathUtils.Tangent(m_BuildCurve, courseDelta)),
                 m_CourseDelta = courseDelta,
-                m_ParentMesh = -1,
+                m_ParentMesh = parentMesh,
             };
         }
 

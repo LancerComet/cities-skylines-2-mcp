@@ -31,8 +31,11 @@ Cities: Skylines II
 ## 构建与安装
 
 ```powershell
-# 1. 编译游戏内 Mod（构建后自动部署到游戏的本地 Mods 目录）
+# 1. 编译游戏内 Mod（默认只构建，不部署）
 dotnet build CS2MCP.Bridge\CS2MCP.Bridge.csproj
+
+# 正常退出游戏并备份已安装DLL/PDB后，显式部署：
+dotnet build CS2MCP.Bridge\CS2MCP.Bridge.csproj -p:DeployToLocalMods=true
 
 # 2. 构建 MCP server
 cd mcp-server
@@ -90,7 +93,9 @@ claude mcp add cs2 -- node <仓库路径>\mcp-server\dist\index.js
 
 启动游戏、读取存档，然后问 Claude："看看我的城市财政状况"、"在河边划一片住宅区"、"修一条路把工业区接上高速"。
 
-## 工具总览（44 个）
+## 工具总览（114 个）
+
+下表保留原有入口概览；新增设施目录、扩建、地形、资源、道路布局和可选模组能力见[完整工具目录](docs/tool-reference.md)。[原生控制与验收](docs/native-control.md)说明预览语义、原生限制、最低桥接版本、失败恢复和模组兼容边界。
 
 **状态与画面**
 
