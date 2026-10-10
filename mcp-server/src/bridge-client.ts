@@ -6,14 +6,15 @@ export const BRIDGE_URL = (process.env.CS2_BRIDGE_URL ?? "http://127.0.0.1:8642"
 
 export class BridgeError extends Error {
   constructor(message: string, public readonly mayHaveApplied = false, public readonly safeToRetry = false,
-    public readonly status?: number) { super(message); }
+    public readonly status?: number, public readonly validationErrors?: unknown[]) { super(message); }
 }
 
 export function isMutation(path: string): boolean {
   const url = new URL(path, "http://127.0.0.1");
-  if (url.searchParams.get("dryRun") === "true" && ["/build/road/connect", "/build/terrain", "/build/building/upgrade",
+  if (url.searchParams.get("dryRun") === "true" && ["/build/place", "/build/road/connect", "/build/terrain", "/build/building/upgrade",
     "/build/place/shoreline", "/build/place/roadside", "/build/extractor-area/edit"].includes(url.pathname)) return false;
-  return url.pathname.startsWith("/build/") || url.pathname === "/mods/anarchy/normal-construction"
+  return (url.pathname === "/game/milestone-popup" && url.searchParams.get("dismiss") === "true")
+    || url.pathname.startsWith("/build/") || url.pathname === "/mods/anarchy/normal-construction"
     || url.pathname === "/mods/anarchy/props/refresh"
     || /\/(set|purchase|buy|save|control|run|create|delete|place)$/.test(url.pathname);
 }
@@ -37,7 +38,7 @@ export async function bridgeFetch(path: string, timeoutMs: number, base = BRIDGE
     const headers = new Headers(request.headers);
     if (process.env.CS2MCP_TOKEN) headers.set("X-CS2MCP-Token", process.env.CS2MCP_TOKEN);
     return await fetch(url, { ...request, headers,
-      method: request.method ?? (isMutation(url.pathname) ? "POST" : "GET"),
+      method: request.method ?? ((isMutation(url.pathname) || isMutation(url.pathname + url.search)) ? "POST" : "GET"),
       signal: AbortSignal.timeout(timeoutMs), redirect: "error" });
   } catch (error) {
     throw new BridgeError(`Cannot reach the CS2 bridge (${(error as Error).message}). ` +
@@ -52,12 +53,13 @@ export async function bridgeJson(path: string, timeoutMs = 12_000, base = BRIDGE
   try { payload = JSON.parse(await res.text()); }
   catch { throw new BridgeError(`CS2 bridge returned an incomplete or invalid JSON response (HTTP ${res.status}); inspect before retrying.`, isMutation(path), false, res.status); }
   if (!res.ok) {
-    const failure = payload as { error?: string; mayHaveApplied?: boolean };
+    const failure = payload as { error?: string; mayHaveApplied?: boolean; validationErrors?: unknown };
     const message = String(failure?.error ?? `bridge returned HTTP ${res.status}`);
     const busy = res.status === 409 && (/^another (build|road|transit) operation is in progress, retry shortly$/i.test(message)
       || message === "another construction operation is in progress");
     const mayHaveApplied = isMutation(path) && (failure?.mayHaveApplied === true || res.status >= 500);
-    throw new BridgeError(message, mayHaveApplied, busy && !mayHaveApplied, res.status);
+    throw new BridgeError(message, mayHaveApplied, busy && !mayHaveApplied, res.status,
+      Array.isArray(failure?.validationErrors) ? failure.validationErrors : undefined);
   }
   return payload;
 }
@@ -69,5 +71,6 @@ export function jsonResult(payload: unknown) {
 export function errorResult(error: unknown) {
   const bridge = error instanceof BridgeError ? error : undefined;
   return { ...jsonResult({ error: error instanceof Error ? error.message : String(error),
-    mayHaveApplied: bridge?.mayHaveApplied ?? false, safeToRetry: bridge?.safeToRetry ?? false, status: bridge?.status }), isError: true };
+    mayHaveApplied: bridge?.mayHaveApplied ?? false, safeToRetry: bridge?.safeToRetry ?? false, status: bridge?.status,
+    validationErrors: bridge?.validationErrors }), isError: true };
 }

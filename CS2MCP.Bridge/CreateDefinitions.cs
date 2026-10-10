@@ -1,4 +1,4 @@
-﻿// Ported for CS2MCP from LineTool-CS2 (Apache-2.0, (c) algernon) - https://github.com/algernon-A/LineTool-CS2
+// Ported for CS2MCP from LineTool-CS2 (Apache-2.0, (c) algernon) - https://github.com/algernon-A/LineTool-CS2
 // Burst attributes removed; runs synchronously on the simulation thread.
 // <copyright file="CreateDefinitions.cs" company="algernon (K. Algernon A. Sheppard)">
 // Copyright (c) algernon (K. Algernon A. Sheppard). All rights reserved.
@@ -821,7 +821,7 @@ namespace CS2MCP
             }
         }
 
-        private void CreateSubNet(Entity netPrefab, Entity lanePrefab, Bezier4x3 curve, int2 nodeIndex, int2 parentMesh, CompositionFlags upgrades, NativeList<float4> nodePositions, Game.Objects.Transform parentTransform, OwnerDefinition ownerDefinition, NativeList<ClearAreaData> clearAreas, BuildingUtils.LotInfo lotInfo, bool hasLot, ref Unity.Mathematics.Random random, CreationFlags creationFlags = default)
+        private void CreateSubNet(Entity netPrefab, Entity lanePrefab, Bezier4x3 curve, int2 nodeIndex, int2 parentMesh, CompositionFlags upgrades, NativeList<float4> nodePositions, Game.Objects.Transform parentTransform, OwnerDefinition ownerDefinition, NativeList<ClearAreaData> clearAreas, BuildingUtils.LotInfo lotInfo, bool hasLot, ref Unity.Mathematics.Random random, CreationFlags creationFlags = default, bool independentLayout = false)
         {
             m_PrefabNetGeometryData.TryGetComponent(netPrefab, out var componentData);
             CreationDefinition component = default(CreationDefinition);
@@ -934,7 +934,18 @@ namespace CS2MCP
                 component2.m_EndPosition.m_Flags |= CoursePosFlags.IsFirst;
             }
 
-            if (ownerDefinition.m_Prefab == Entity.Null)
+            if (independentLayout)
+            {
+                // 独立道路没有资产母体。固定端点的世界高度不能再被FreeHeight按地面+局部y解释，
+                // 结构高程仍用原生地面差值，后续CourseSplit、Validation和收费完整保留。
+                component2.m_StartPosition.m_Elevation = component2.m_StartPosition.m_Position.y
+                    - TerrainUtils.SampleHeight(ref m_TerrainHeightData, component2.m_StartPosition.m_Position);
+                component2.m_EndPosition.m_Elevation = component2.m_EndPosition.m_Position.y
+                    - TerrainUtils.SampleHeight(ref m_TerrainHeightData, component2.m_EndPosition.m_Position);
+                if (parentMesh.x < 0) component2.m_StartPosition.m_Flags |= CoursePosFlags.FreeHeight;
+                if (parentMesh.y < 0) component2.m_EndPosition.m_Flags |= CoursePosFlags.FreeHeight;
+            }
+            else if (ownerDefinition.m_Prefab == Entity.Null)
             {
                 component2.m_StartPosition.m_Flags |= CoursePosFlags.FreeHeight;
                 component2.m_EndPosition.m_Flags |= CoursePosFlags.FreeHeight;

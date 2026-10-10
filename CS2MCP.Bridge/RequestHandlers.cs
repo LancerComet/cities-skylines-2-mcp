@@ -129,6 +129,10 @@ namespace CS2MCP
                     return SetBuildingDistricts(request);
                 case "/zones/cells":
                     return GetZoneCells(request);
+                case "/settings/graphics":
+                    return GetGraphicsSettings();
+                case "/settings/graphics/set":
+                    return SetGraphicsSettings(request);
                 case "/city/overview":
                     return GetCityOverview();
                 case "/city/demand":
@@ -221,6 +225,8 @@ namespace CS2MCP
                     return InspectEntity(request);
                 case "/sim/control":
                     return SimControl(request);
+                case "/game/milestone-popup":
+                    return MilestonePopupControl(request);
                 case "/sim/run":
                     return SimRun(request);
                 case "/game/save":
@@ -323,6 +329,7 @@ namespace CS2MCP
                 loadedSaveGuid = inGame ? World.GetExistingSystemManaged<Game.Serialization.LoadGameSystem>()?.context.instigatorGuid.ToString() : null,
                 loadPurpose = inGame ? World.GetExistingSystemManaged<Game.Serialization.LoadGameSystem>()?.context.purpose.ToString() : null,
                 simulation,
+                clockControl = inGame ? GetClockControlState() : null,
             });
         }
 
@@ -441,34 +448,47 @@ namespace CS2MCP
                 || (checkedSpeed != 0 && checkedSpeed != 1 && checkedSpeed != 2 && checkedSpeed != 4)))
                 return BridgeResponse.Error(400, "speed must be native paused/1x/2x/4x: 0, 1, 2 or 4");
             if (request.Query.ContainsKey("paused") && !request.TryGetBool("paused", out _)) return BridgeResponse.Error(400, "paused must be boolean");
+            if (request.Query.ContainsKey("backgroundSimulation") && !request.TryGetBool("backgroundSimulation", out _)) return BridgeResponse.Error(400, "backgroundSimulation must be boolean");
+            if (!ReadClockGate(out var clockUI, out bool clockFocus, out _)) return BridgeResponse.Error(409, "native time UI controls or pause gate are unavailable");
+            float desiredSpeed = sim.selectedSpeed;
 
             if (request.TryGetFloat("speed", out float speed))
             {
-                sim.selectedSpeed = speed;
+                desiredSpeed = speed;
                 changed = true;
             }
             if (request.TryGetBool("paused", out bool paused))
             {
                 if (paused)
                 {
-                    sim.selectedSpeed = 0f;
+                    desiredSpeed = 0f;
                 }
-                else if (sim.selectedSpeed <= 0f)
+                else if (desiredSpeed <= 0f)
                 {
-                    sim.selectedSpeed = 1f;
+                    desiredSpeed = m_RequestedSimulationSpeed > 0f ? m_RequestedSimulationSpeed : 1f;
                 }
                 changed = true;
             }
 
+            if (request.TryGetBool("backgroundSimulation", out bool background)) {
+                m_BackgroundSimulation = background;
+                m_LastClockFocus = clockFocus;
+                changed = true;
+            }
             if (!changed)
             {
-                return BridgeResponse.Error(400, "provide ?speed=0..8 and/or ?paused=true|false");
+                return BridgeResponse.Error(400, "provide native speed=0|1|2|4, paused or backgroundSimulation");
             }
+
+            m_System.SetAutoPause(0);
+            m_RequestedSimulationSpeed = desiredSpeed;
+            SetNativeClock(clockUI, desiredSpeed);
 
             return BridgeResponse.Json(new
             {
                 paused = sim.selectedSpeed <= 0f,
                 selectedSpeed = sim.selectedSpeed,
+                clockControl = GetClockControlState(),
             });
         }
 

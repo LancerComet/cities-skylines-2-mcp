@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using Colossal.Mathematics;
@@ -497,6 +497,7 @@ namespace CS2MCP
                         usage = data.usage,
                         lengthMeters = data.length,
                         stopList = includeStops ? DescribeLineStops(line, names) : null,
+                        pathDiagnostics = includeStops ? DescribeLinePathDiagnostics(line) : null,
                     });
                 }
             }
@@ -540,6 +541,26 @@ namespace CS2MCP
                 });
             }
             return result;
+        }
+
+        // 原生路径结果与设施/网络几何分开：线路长度与图上连通不能代替每段寻路。
+        private object DescribeLinePathDiagnostics(Entity line)
+        {
+            var rows = new List<object>();
+            if (!EntityManager.HasBuffer<Game.Routes.RouteSegment>(line)) return new { segments = rows, complete = true };
+            var segments = EntityManager.GetBuffer<Game.Routes.RouteSegment>(line, true);
+            foreach (var item in segments) {
+                var segment = item.m_Segment;
+                if (!EntityManager.Exists(segment)) { rows.Add(new { entity = Ref(segment), missing = true }); continue; }
+                object information = EntityManager.HasComponent<Game.Pathfind.PathInformation>(segment)
+                    ? OptionalModApi.JsonValue(EntityManager.GetComponentData<Game.Pathfind.PathInformation>(segment)) : null;
+                int pathElementCount = EntityManager.HasBuffer<Game.Pathfind.PathElement>(segment)
+                    ? EntityManager.GetBuffer<Game.Pathfind.PathElement>(segment, true).Length : 0;
+                rows.Add(new { entity = Ref(segment), information, pathElementCount,
+                    targets = EntityManager.HasComponent<Game.Routes.PathTargets>(segment)
+                        ? OptionalModApi.JsonValue(EntityManager.GetComponentData<Game.Routes.PathTargets>(segment)) : null });
+            }
+            return new { segments = rows, complete = true };
         }
 
         private BridgeResponse CreateTransitLine(BridgeRequest request)

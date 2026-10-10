@@ -124,6 +124,14 @@ namespace CS2MCP
                 end.Elevation = math.clamp(e2, -30f, 60f);
                 end.Position.y += end.Elevation;
             }
+            // 显式参数不是全部输入：未传高程的自由端默认0，吸附端则采用真实世界位置。
+            // 地下专用网络不能凭默认0或旧节点的缺省Elevation字段落到地面；未知/越界在排队前拒绝。
+            float resolvedStartElevation = start.Entity == Entity.Null ? start.Elevation
+                : start.Position.y - SampleNetworkSurface(waterway, ref waterData, ref heightData, start.Position);
+            float resolvedEndElevation = end.Entity == Entity.Null ? end.Elevation
+                : end.Position.y - SampleNetworkSurface(waterway, ref waterData, ref heightData, end.Position);
+            if (!CheckNetElevation(prefabEntity, resolvedStartElevation, out error)
+                || !CheckNetElevation(prefabEntity, resolvedEndElevation, out error)) return error;
             if (start.Entity != Entity.Null && start.Entity == end.Entity)
             {
                 return BridgeResponse.Error(400, "both ends snap to the same junction or segment; move an end or lower snap");

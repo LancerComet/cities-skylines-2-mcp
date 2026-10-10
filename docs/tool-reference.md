@@ -1,29 +1,31 @@
 # 完整工具目录
 
-桥接及服务版本：0.10.0。实际 MCP 握手提供 114 个工具。参数、默认值和允许范围以 MCP 的 inputSchema 为准；预览与应用限制见[原生控制与验收](native-control.md)。
+桥接与 MCP 公共版本：0.10.1；共 117 个工具。
 
-| 工具 | 用途 |
+本目录从实际 MCP listTools 握手生成。参数以工具 schema 为准；正常资格、预览、失败恢复和运营验收见 [原生控制与验收](native-control.md)。
+
+| 工具 | 作用与边界 |
 |---|---|
-| `cs2_facility_parking_fees` | 读取原生允许付费停车的停车设施与公共服务建筑：当前启用、实际政策值、原生滑块上下限。手工道路停车使用整体市辖区收费。需要桥接0.10.0。 |
-| `cs2_set_facility_parking_fee` | 通过建筑面板 PaidParking 原生政策设置停车费，严格遵守当前原生上限与解锁，不修改泊位或政策预制体。入队后再次读取确认。需要桥接0.10.0。 |
+| `cs2_facility_parking_fees` | 读取原生允许付费停车的停车设施与公共服务建筑：当前启用、实际政策值、原生滑块上下限。手工道路停车使用整体市辖区收费。需要桥接0.10.1。 |
+| `cs2_set_facility_parking_fee` | 通过建筑面板 PaidParking 原生政策设置停车费，严格遵守当前原生上限与解锁，不修改泊位或政策预制体。入队后再次读取确认。需要桥接0.10.1。 |
 | `cs2_mod_assets` | 分页搜索有原生放置定义的静态道具，包括已导入资产；读活本地化中文名与正常解锁，不返回独立不可见资产。 |
 | `cs2_place_prop` | 对cs2_mod_assets查出的正常可用道具走原生预览、Validation、收费与应用。dryRun默认true，只有显式false才施工；不提供force或碰撞忽略。 |
-| `cs2_mod_catalog` | 实时核对16种模组程序集、版本、已有系统及接入动作。组件库通过资产、图标、本地化和状态接入；加载不代表全部写接口可控。需要桥接0.10.0。 |
+| `cs2_mod_catalog` | 实时核对16种模组程序集、版本、已有系统及接入动作。组件库通过资产、图标、本地化和状态接入；加载不代表全部写接口可控。需要桥接0.10.1。 |
 | `cs2_mod_inspect` | 只读Anarchy独立开关/27项错误策略、RoadBuilder配置、NetworkTools参数/会话、MoveIt队列、NodeController节点端部、Traffic组件或TrafficLightManager相位/模板。可传完整实体index/version。信号配时单位是64模拟帧一次的更新计数。 |
 | `cs2_mod_operation` | 读取最近NetworkTools/Traffic工具会话的操作ID、状态、预览或结果；超时/失败后先回读，禁止盲目重试。 |
 | `cs2_anarchy_helpers` | 只开放已核实的高程显示、换资产重置、升级展示、防道具剔除与笔刷辅助。偏好不等于施工参数，不启用错误放行、重复独特建筑或扩展高程。 |
 | `cs2_anarchy_refresh_props` | 调用Anarchy原生刷新调度；返回requested，不冒充完成，不更改网络碰撞。 |
-| `cs2_mod_action` | 道路独立模板、NetworkTools预览/应用/取消、NodeController过街、BetterBulldozer精确装饰删除/防重生恢复、Traffic原生清理/重置、TrafficLightManager相位/成员/完整放行掩码/模板。payload受桥接逐动作校验，默认dryRun=true（network会话操作除外）。先读docs/native-control.md中的模组契约。异步返回operationId后轮询cs2_mod_operation，不能以请求代替结果。需要桥接0.10.0。 |
-| `cs2_interchange_info` | 读取AssetStamp的真实道路预制体、宽度、三维贝塞尔曲线、共享节点、吸附、方向翻转和道路升级。局部坐标用于独立复刻与改造；分页完整读取后仍须实际生成车道与运营验收。需要桥接0.10.0。 |
-| `cs2_place_interchange` | 使用游戏AssetStamp/ObjectTool原生生成、Validation和正常收费，不绕过解锁、碰撞或用地。默认仅预览，显式dryRun=false才施工；返回应用不代表连接或通车完成。需要桥接0.10.0。 |
-| `cs2_build_road_layout` | 明确指定全部正常道路、三维曲线、共享节点、高程固定方式和升级，复用原生CreateSubNet进行统一预览、Validation和逐道路正常收费。默认只预览；不改源资产，不依赖临时或不可见母体。原生收费按道路生成成本，可能与作者固定资产售价不同。需要桥接0.10.0。 |
-| `cs2_remove_road_layout` | 完整身份逐条验证后统一走原生拆除预览、校验、退款及应用，避免逐段拆除时自动合并导致后续编号过期。默认dryRun=true；仅独立可见道路，不能选择建筑内部网络或重复实体。需桥接0.10.0；操作后读实际道路与资金。 |
-| `cs2_facility_catalog` | 一次按原生服务和菜单归属读取非成长设施及标志性建筑（isSignature单列）：说明、费用、尺寸、锁定、容量/效果原始字段、扩建与实际已建位置。固定扩建随父设施列出；目录资格不代替正常放置与运营验收。需要桥接0.10.0。 |
-| `cs2_signature_buildings` | 按原生SignatureBuildingData读取住宅、混合用途、商业、工业、办公标志性建筑，含所属分区、正常解锁/内容可用性、实际已建位置、占地和原生全城效果。名称相似的升级与普通成长建筑不混入。需要桥接0.10.0。 |
-| `cs2_move_building` | 原生ObjectTool的Relocate预览、碰撞/资金校验、应用流程；只接受独立手动建筑/标志性建筑，不移动普通分区成长楼、专门产业占位母体或单独子物体。现有专门产业优先原位扩围，成套迁移未接入。普通建筑的扩建与内部结构仍须在应用后独立复核入口、水电、经营和升级；不支持force。dryRun仅位置计算。需要桥接0.10.0。 |
-| `cs2_natural_resources` | 只读石油、矿石、肥沃土地、鱼类的原生格基础量/已使用量/差值，注明格号、尺度、时间和帧。不是吨、百分比或产出预测，不含城市加成/多边形积分，森林使用独立树木数据。粗网格可能漏小矿带；不写资源，不调用编辑器。需要桥接 0.10.0。 |
-| `cs2_extractor_areas` | 有界读取指定建筑的原生自有区域或指定区域：边界、入口、所属、原生编辑限制、资源与采掘计数。原始计数不是吨或月产量，区域存在不代表企业投产。需要桥接 0.10.0。 |
-| `cs2_edit_extractor_area` | 只编辑正常建筑自有且原生允许编辑的采掘 Lot，走原生预览/校验/应用。nodes 不重复闭合点，前两个入口节点须保持原坐标和顺序；保留所属与缓存，遵守原生半径、已购土地和碰撞。dryRun 只检查资格与多边形，不是碰撞/费用/资源/投产预览。不创建独立或隐形资产，不支持 force。需要桥接 0.10.0。 |
+| `cs2_mod_action` | 道路独立模板、NetworkTools预览/应用/取消、NodeController过街、BetterBulldozer精确装饰删除/防重生恢复、Traffic原生清理/重置、TrafficLightManager相位/成员/完整放行掩码/模板。payload受桥接逐动作校验，默认dryRun=true（network会话操作除外）。先读docs/native-control.md中的模组契约。异步返回operationId后轮询cs2_mod_operation，不能以请求代替结果。需要桥接0.10.1。 |
+| `cs2_interchange_info` | 读取AssetStamp的真实道路预制体、宽度、三维贝塞尔曲线、共享节点、吸附、方向翻转和道路升级。局部坐标用于独立复刻与改造；分页完整读取后仍须实际生成车道与运营验收。需要桥接0.10.1。 |
+| `cs2_place_interchange` | 使用游戏AssetStamp/ObjectTool原生生成、Validation和正常收费，不绕过解锁、碰撞或用地。默认仅预览，显式dryRun=false才施工；返回应用不代表连接或通车完成。需要桥接0.10.1。 |
+| `cs2_build_road_layout` | 明确指定全部正常道路、三维曲线、共享节点、高程固定方式和升级，复用原生CreateSubNet进行统一预览、Validation和逐道路正常收费。曲线y是相对原点坐标；桥接在世界坐标按各处实际地面校验原生高程范围，包含共享节点。默认只预览；不改源资产，不依赖临时或不可见母体。需要桥接0.10.1。 |
+| `cs2_remove_road_layout` | 完整身份逐条验证后统一走原生拆除预览、校验、退款及应用，避免逐段拆除时自动合并导致后续编号过期。默认dryRun=true；仅独立可见道路，不能选择建筑内部网络或重复实体。需桥接0.10.1；操作后读实际道路与资金。 |
+| `cs2_facility_catalog` | 一次按原生服务和菜单归属读取非成长设施及标志性建筑（isSignature单列）：说明、费用、尺寸、锁定、原始容量/效果、正常升级及现场安装数量/位置。固定扩建随父设施列出；空升级数组表示当前原生菜单无手动升级。目录资格不代替正常放置与运营验收。需要桥接0.10.1。 |
+| `cs2_signature_buildings` | 按原生SignatureBuildingData读取住宅、混合用途、商业、工业、办公标志性建筑，含所属分区、正常解锁/内容可用性、实际已建位置、占地和原生全城效果。名称相似的升级与普通成长建筑不混入。需要桥接0.10.1。 |
+| `cs2_move_building` | 原生ObjectTool的Relocate预览、碰撞/资金校验、应用流程；只接受独立手动建筑/标志性建筑，不移动普通分区成长楼、专门产业占位母体或单独子物体。现有专门产业优先原位扩围，成套迁移未接入。普通建筑的扩建与内部结构仍须在应用后独立复核入口、水电、经营和升级；不支持force。dryRun仅位置计算。需要桥接0.10.1。 |
+| `cs2_natural_resources` | 只读石油、矿石、肥沃土地、鱼类的原生格基础量/已使用量/差值，注明格号、尺度、时间和帧。不是吨、百分比或产出预测，不含城市加成/多边形积分，森林使用独立树木数据。粗网格可能漏小矿带；不写资源，不调用编辑器。需要桥接 0.10.1。 |
+| `cs2_extractor_areas` | 有界读取指定建筑的原生自有区域或指定区域：边界、入口、所属、原生编辑限制、资源与采掘计数。原始计数不是吨或月产量，区域存在不代表企业投产。需要桥接 0.10.1。 |
+| `cs2_edit_extractor_area` | 只编辑正常建筑自有且原生允许编辑的采掘 Lot，走原生预览/校验/应用。nodes 不重复闭合点，前两个入口节点须保持原坐标和顺序；保留所属与缓存，遵守原生半径、已购土地和碰撞。dryRun 只检查资格与多边形，不是碰撞/费用/资源/投产预览。不创建独立或隐形资产，不支持 force。需要桥接 0.10.1。 |
 | `cs2_skyve_status` | 只读 Skyve 本地缓存和限定日志：原生启用配组、加载模块、兼容性审查版本、必需与可选依赖、脱敏警告。每个来源独立注明时间与读取失败，缓存不是实时兼容性保证。不登录、不修改订阅/配组、不调用会弹出窗口的 Skyve 命令管道。 |
 | `cs2_ping` | Check that Cities: Skylines II is running with the CS2MCP bridge mod loaded. Returns mod version, current game mode (MainMenu / Game / Editor) and whether a save is loading. Works even while a save is still loading; use this first to diagnose connection issues. |
 | `cs2_development` | Native development points, nodes, service and parent prerequisites, and actual purchase eligibility. |
@@ -44,11 +46,14 @@
 | `cs2_environment_field` | 批量读取实际空气污染搬运风场、水流向、水深及污染；向量为流往方向，干地水流为null。刚加载未模拟时明确提示初始化风险，不假定单位为米/秒。 |
 | `cs2_content_status` | 只读原生成就启用标志、正常游戏选项、内容可用性和实际不可用引用；不修改成就或DLC。 |
 | `cs2_save_settings` | 读取真实秒数、原生轮换数量；原生自动存档与手动主档独立。 |
-| `cs2_set_save_settings` | 使用游戏原生菜单定时与轮换设置；当前1/2/5/10/30/60分钟，20分钟不是原生菜单选项，不定时覆盖手动主档。原生轮换总数为全用户数据目录自动档范围。 |
+| `cs2_set_save_settings` | 使用游戏原生菜单定时与轮换设置；当前1/2/5/10/30/60分钟，20分钟不是原生菜单选项，不定时覆盖手动主档。原生轮换总数为全本机自动档范围。 |
+| `cs2_graphics_settings` | 读取原生垂直同步、基础渲染帧率上限；显卡驱动插帧后的帧率不在游戏内可读。 |
+| `cs2_set_graphics_settings` | 使用原生设置关闭/开启垂直同步，并保存本地基础帧率上限；不改变画质与驱动插帧。 |
 | `cs2_game_state` | Get the current game state: game mode, whether a city is loaded, city name, simulation pause/speed and the in-game date/time. |
 | `cs2_city_overview` | Key statistics of the loaded city: population (plus citizens currently moving in), average happiness and health, city treasury money, XP, in-game date and simulation speed. Requires a loaded city. |
 | `cs2_demand` | Residential (low/medium/high density), commercial, industrial, office and storage demand of the loaded city, including native scale metadata: residential and building-demand bars are 0-100; industrial/office company demand and storage are raw native values, not percentages. Includes factors explaining WHY demand is high or low (e.g. Taxes, Unemployment, EmptyZones, Homelessness). Positive factor values push demand up, negative values push it down. |
-| `cs2_set_simulation` | Control the simulation clock: pause/unpause the game and/or set the simulation speed (0 = paused, 1 = normal, 2 = double, 4 = fastest UI speed). Returns the resulting state. |
+| `cs2_set_simulation` | Control the simulation clock: pause/unpause the game and/or set the simulation speed (0 = paused, 1 = normal, 2 = double, 4 = fastest UI speed). Returns the resulting state. backgroundSimulation explicitly enables this-load-only background running; native menu/save/error pause barriers remain active. |
+| `cs2_milestone_popup` | 读取正常解锁后待确认的通知；dismiss=true调用原生继续动作。不能解锁、加钱、加点或消除错误/保存暂停屏障。需要桥接0.10.1。 |
 | `cs2_screenshot` | Capture the current game view as a PNG image. Useful for seeing the city layout, checking what the player is looking at, or verifying the result of an action. Returns the image directly. |
 | `cs2_budget` | Detailed city budget: total income/expenses, balance, and a per-source breakdown (residential/commercial/industrial/office taxes, service fees, subsidies, service upkeep, loan interest, electricity/water import-export, map tile upkeep). Values are monthly rates; expenses are positive costs. |
 | `cs2_city_services` | Electricity (production/consumption/battery/trade), water & sewage (capacity/consumption/trade) and garbage accumulation of the loaded city. Compare production vs consumption to spot shortages. |
@@ -64,8 +69,8 @@
 | `cs2_service_budgets` | Per-service budget sliders (50-150%, 100 = default) with current efficiency, estimated upkeep cost and building count for every city service (police, healthcare, education, transport, ...). |
 | `cs2_set_service_budget` | Set the budget percentage (50-150) for one city service by name (from cs2_service_budgets). Lower budgets save money but reduce service efficiency; higher budgets do the opposite. |
 | `cs2_find_prefabs` | Search the game's building or road prefabs by name substring. Returns exact prefab names needed by cs2_place_building, plus their type and locked state. Example queries: 'school', 'FireHouse', 'WindTurbine', 'Highway'. |
-| `cs2_place_building` | Place a building in the world at the given map coordinates (x, z in meters; the map is roughly -7000 to +7000 on each axis, use cs2_list_buildings to see coordinates of existing buildings for reference). Height is sampled from the terrain automatically. The game validates the placement (collisions, terrain, water) and the call fails with an explanation if blocked. Costs city money like a normal player action. Verify the result with cs2_screenshot or cs2_list_buildings. |
-| `cs2_build_road` | Build any network segment between two world coordinates (terrain-following): roads, train tracks, pedestrian paths, power lines, pipes ; any prefab from cs2_find_prefabs category 'road' or 'net'. Straight by default; pass cx/cz for a curved segment through that control point. Length 8-1500m. Endpoints on existing nodes connect to them. Costs city money; fails with an explanation if blocked. |
+| `cs2_place_building` | Place a building in the world at the given map coordinates (x, z in meters; the map is roughly -7000 to +7000 on each axis, use cs2_list_buildings to see coordinates of existing buildings for reference). Height is sampled from the terrain automatically. The game validates the placement (collisions, terrain, water) and the call fails with an explanation if blocked. Costs city money like a normal player action. dryRun=true uses native placement preview, clears it without construction or charges, and needs bridge 0.10.1. Verify the result with cs2_screenshot or cs2_list_buildings. |
+| `cs2_build_road` | Build any network segment between two world coordinates (terrain-following): roads, train tracks, pedestrian paths, power lines, pipes ;any prefab from cs2_find_prefabs category 'road' or 'net'. Straight by default; pass cx/cz for a curved segment through that control point. Length 8-1500m. Endpoints on existing nodes connect to them. Costs city money; fails with an explanation if blocked. |
 | `cs2_list_buildings` | List buildings existing in the city with their prefab name, world position and entity id (index+version, needed for cs2_demolish). Filter by name substring to find specific buildings. |
 | `cs2_list_zones` | All zone types (residential low/medium/high, commercial, industrial, office...) with their internal name, area type and locked state. Use the exact name with cs2_zone_area. |
 | `cs2_zone_area` | Paint zoning on all zonable cells within a radius around a point. Zone cells only exist along roads (build a road first). Pass zone='None' to remove zoning. Buildings grow on zoned cells while the simulation runs, driven by RCI demand (check cs2_demand). |
@@ -74,9 +79,9 @@
 | `cs2_apply_road_service` | 按实时目录serviceApplicationSupported应用正常边段升级，含挡土墙、堤岸、高架、隧道、景观和车道；保留无关设置，invert翻转单侧，remove取消。节点及禁转用各自工具，Ground/恒坡用connect_road显式参数。dryRun仅解析标志，正常原生碰撞与收费，不启用错误屏蔽。 |
 | `cs2_upgrade_road` | Apply upgrades to an existing road segment (from cs2_list_roads): grass, trees, wideSidewalk, soundBarrier, parking, lighting, medianGrass, medianTrees. Combine multiple with commas. The segment is recreated with the new composition via the game's tool pipeline. |
 | `cs2_list_roads` | List road segments (edges) with entity id, prefab name, start/end coordinates and length. Filter spatially with x/z/radius or by prefab-name substring. Use the entity id with cs2_demolish. |
-| `cs2_demolish` | Demolish (bulldoze) one building (from cs2_list_buildings) or road segment (from cs2_list_roads) identified by its entity index and version. Irreversible ; double-check the target first. |
+| `cs2_demolish` | Demolish (bulldoze) one building (from cs2_list_buildings) or road segment (from cs2_list_roads) identified by its entity index and version. Irreversible ;double-check the target first. |
 | `cs2_get_camera` | Current gameplay camera: pivot (look-at point), position, compass/tilt angles and zoom distance. |
-| `cs2_set_camera` | Point the gameplay camera: set the pivot (look-at world coordinates; height auto-sampled from terrain unless y given), compass rotation angleX (degrees), tilt angleY (0-89) and zoom distance. Combine with cs2_screenshot to LOOK at any place in the city ; the AI's own eyes. |
+| `cs2_set_camera` | Point the gameplay camera: set the pivot (look-at world coordinates; height auto-sampled from terrain unless y given), compass rotation angleX (degrees), tilt angleY (0-89) and zoom distance. Combine with cs2_screenshot to LOOK at any place in the city ;the AI's own eyes. |
 | `cs2_terrain` | Sampled heightmap and water-depth grid of the whole map (14336x14336m), or a local x/z/radius region. Returns row-major arrays; local maps use bounds/cellSizeX/Z; waterDepths > 0 marks rivers/lakes/sea. Use to understand geography before planning construction. |
 | `cs2_gridmap` | The game's native cell-map grids as row-major arrays: landValue, groundPollution, airPollution, noisePollution, groundWater, groundWaterPollution. Use to pick good locations (cheap land, clean air, water for pumps) like a player reading infoviews. |
 | `cs2_zoning` | Summary of painted zones: cells per zone type with occupied/empty split, whole-city or within a radius. Empty zoned cells are where buildings will grow. |
@@ -88,13 +93,13 @@
 | `cs2_set_fee` | Set the fee/price for one service resource (name from cs2_get_fees). Higher fees raise income but reduce usage and citizen happiness. |
 | `cs2_list_objects` | List standalone trees and plants (not building sub-objects) with entity ids and positions. Filter by name or spatially. Use the entity id with cs2_demolish to remove them. |
 | `cs2_run_simulation` | Unpause and run the simulation at the given speed, auto-pausing after the requested number of in-game hours. Returns immediately with the target frame; poll cs2_game_state (frameIndex) to track progress. Use cancel=true to stop early. The core loop for autonomous mayoring: act, run time forward, observe results. |
-| `cs2_save_game` | 使用当前可见游戏画面，经原生保存流程完成后返回；调用后仍须核文件落盘、内层GUID和备份。 Default name is timestamped 'CS2MCP ...'. |
+| `cs2_save_game` | 经原生保存流程完成后返回；后台隐藏时includePreview=false省略缩略图，不额外渲染或恢复前台。调用后仍须核文件落盘、内层GUID和备份。 Default name is timestamped 'CS2MCP ...'. |
 | `cs2_tiles_info` | Owned/total map tiles, tiles available to purchase and upkeep settings. (Purchasing via API arrives in v0.9.) |
 | `cs2_list_districts` | All districts with entity id, center position, polygon size and active policy count. |
 | `cs2_create_district` | Draw a district over an area by polygon corners (3-32 points, world meters). Buildings and roads inside get assigned to it; district policies can then be applied to just that area. |
 | `cs2_district_policies` | Policies available for one district (speed limits, parking fees, combustion ban...) with active/locked state. District from cs2_list_districts. |
 | `cs2_set_district_policy` | Activate/deactivate a policy on one district (policy name from cs2_district_policies). |
-| `cs2_transport_overview` | 原生交通信息页同源配置、显示／解锁、线路计数和居民／游客／货运统计，覆盖出租车、公交、铁路、电车、地铁、渡轮、客船、航空和公路货运。横线与零线路分别返回；原始货运单位不冒充人数或吨。需要桥接0.10.0。 |
+| `cs2_transport_overview` | 原生交通信息页同源配置、显示／解锁、线路计数和居民／游客／货运统计，覆盖出租车、公交、铁路、电车、地铁、渡轮、客船、航空和公路货运。横线与零线路分别返回；原始货运单位不冒充人数或吨。需要桥接0.10.1。 |
 | `cs2_list_transit_stops` | List existing transit stops (bus/tram roadside stops, train/metro station platforms) with entity id, type, name, position, owning station building, attached road and the lines already serving each stop. Filter by type and/or spatially (sorted by distance when x/z given). prefabs=true also lists placeable roadside stop prefabs for cs2_place_transit_stop. |
 | `cs2_place_transit_stop` | Place a roadside bus or tram stop at the road nearest to (x, z), on the side of the road where the point is (or on a specific road segment via road). Runs through the game's object tool pipeline: the game attaches the stop to the road, snaps it to the curb, validates it (sidewalk, lanes, overlap, money) and charges the normal cost. Train/metro stops are station buildings: use cs2_place_building for those. Returns the new stop's entity id for cs2_create_transit_line. The road segment is regenerated, so its id may change. |
 | `cs2_create_transit_line` | Create a bus/tram/metro/train/ship/ferry line through existing stops, in order; the line automatically loops back to the first stop. Each stop is a stop entity id, a station building id (its matching platform is used) or an {x, z} point (snaps to the nearest existing stop of that type within snapRadius). Uses the game's own route pipeline: it waits for the game to pathfind every segment, and fails with an explanation (e.g. 'no bus path from stop #2 to stop #3') instead of creating a broken line. Needs a depot of the same type for vehicles. |

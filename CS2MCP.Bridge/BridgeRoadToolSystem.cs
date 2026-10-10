@@ -190,10 +190,12 @@ namespace CS2MCP
                         {
                             List<string> errors = CollectTempErrors();
                             applyMode = ApplyMode.Clear;
-                            CompletePending(BridgeResponse.Error(409,
-                                OperationName + " blocked by game validation (" +
+                            CompletePending(BridgeResponse.Json(new {
+                                error = OperationName + " blocked by game validation (" +
                                 (errors.Count > 0 ? string.Join(", ", errors) : "overlap, unsupported road type, protected segment...") +
-                                "); nothing was changed"));
+                                "); nothing was changed",
+                                validationErrors = CollectTempErrorLocations()
+                            }, 409));
                         }
                         m_Stage = Stage.Finish;
                         break;
@@ -324,7 +326,7 @@ namespace CS2MCP
                 course.m_EndPosition.m_Flags |= CoursePosFlags.FreeHeight;
             }
 
-            // 与Anarchy 1.8 NetworkDefinitionSystem.Ground 相同：保持世界几何，
+            // 与 Anarchy 1.8 NetworkDefinitionSystem.Ground 相同：保持世界几何，
             // 仅将定义的结构Elevation归零。仍走后续原生地形、碰撞、解锁与收费校验。
             if (m_PendingRequest.Query.TryGetValue("composition", out string composition) && composition == "ground")
             {
@@ -541,6 +543,28 @@ namespace CS2MCP
                 }
             }
             return names;
+        }
+
+        // 返回原生错误图标位置，方便按真实冲突调整几何；只读预览，不解除校验。
+        private List<object> CollectTempErrorLocations()
+        {
+            var rows = new List<object>();
+            using (var icons = m_IconQuery.ToEntityArray(Allocator.Temp))
+                foreach (var icon in icons) {
+                    var owner = EntityManager.GetComponentData<Owner>(icon).m_Owner;
+                    if (!EntityManager.Exists(owner) || !EntityManager.HasComponent<Temp>(owner)) continue;
+                    var prefab = EntityManager.GetComponentData<PrefabRef>(icon).m_Prefab;
+                    if (!EntityManager.HasComponent<ToolErrorData>(prefab)) continue;
+                    object location = null;
+                    if (EntityManager.HasComponent<Game.Notifications.Icon>(icon)) {
+                        var p = EntityManager.GetComponentData<Game.Notifications.Icon>(icon).m_Location;
+                        location = new { x = p.x, y = p.y, z = p.z };
+                    }
+                    rows.Add(new { error = EntityManager.GetComponentData<ToolErrorData>(prefab).m_Error.ToString(),
+                        temporaryOwner = new { index = owner.Index, version = owner.Version }, location });
+                    if (rows.Count >= 32) break;
+                }
+            return rows;
         }
 
         private void CompletePending(BridgeResponse response)

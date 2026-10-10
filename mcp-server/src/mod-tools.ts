@@ -27,7 +27,7 @@ export function registerModTools(server:McpServer,requireVersion:()=>Promise<voi
   server.registerTool('cs2_place_prop',{title:'正常放置可见静态道具',description:'对cs2_mod_assets查出的正常可用道具走原生预览、Validation、收费与应用。dryRun默认true，只有显式false才施工；不提供force或碰撞忽略。',annotations:write,
     inputSchema:{prefab:z.string().min(1),x:z.number().finite().min(-7168).max(7168),z:z.number().finite().min(-7168).max(7168),y:z.number().finite().min(-100).max(3000).optional(),rotation:z.number().finite().default(0),dryRun:z.boolean().default(true)}},async(args)=>{
       try{await requireObjectPreviewVersion();return jsonResult(await bridgeJson(`/build/prop/place?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,30000));}catch(e){return errorResult(e);}});
-  server.registerTool('cs2_mod_catalog',{title:'已加载模组功能与原生接口清单',description:'实时核对16种模组程序集、版本、已有系统及接入动作。组件库通过资产、图标、本地化和状态接入；加载不代表全部写接口可控。需要桥接0.10.0。',annotations:readOnly,inputSchema:{}},async()=>{
+  server.registerTool('cs2_mod_catalog',{title:'已加载模组功能与原生接口清单',description:'实时核对16种模组程序集、版本、已有系统及接入动作。组件库通过资产、图标、本地化和状态接入；加载不代表全部写接口可控。需要桥接0.10.1。',annotations:readOnly,inputSchema:{}},async()=>{
     try{await requireVersion();return jsonResult(await bridgeJson('/mods/catalog'));}catch(e){return errorResult(e);}});
   server.registerTool('cs2_mod_inspect',{title:'模组实际状态与配置回读',description:'只读Anarchy独立开关/27项错误策略、RoadBuilder配置、NetworkTools参数/会话、MoveIt队列、NodeController节点端部、Traffic组件或TrafficLightManager相位/模板。可传完整实体index/version。信号配时单位是64模拟帧一次的更新计数。',annotations:readOnly,
     inputSchema:{mod:z.enum(mods),entity:entityIdentity.optional()}},async({mod,entity})=>{
@@ -38,7 +38,7 @@ export function registerModTools(server:McpServer,requireVersion:()=>Promise<voi
     try{await requireVersion();const payload=helperSchema.parse(args);return jsonResult(await bridgeJson(payloadPath('/mods/anarchy/helpers/set',payload)));}catch(e){return errorResult(e);}});
   server.registerTool('cs2_anarchy_refresh_props',{title:'请求Anarchy刷新道具可见性',description:'调用Anarchy原生刷新调度；返回requested，不冒充完成，不更改网络碰撞。',annotations:write,inputSchema:{}},async()=>{
     try{await requireVersion();return jsonResult(await bridgeJson('/mods/anarchy/props/refresh'));}catch(e){return errorResult(e);}});
-  server.registerTool('cs2_mod_action',{title:'执行明确模组原生动作',description:'道路独立模板、NetworkTools预览/应用/取消、NodeController过街、BetterBulldozer精确装饰删除/防重生恢复、Traffic原生清理/重置、TrafficLightManager相位/成员/完整放行掩码/模板。payload受桥接逐动作校验，默认dryRun=true（network会话操作除外）。先读docs/native-control.md中的模组契约。异步返回operationId后轮询cs2_mod_operation，不能以请求代替结果。需要桥接0.10.0。',annotations:write,
+  server.registerTool('cs2_mod_action',{title:'执行明确模组原生动作',description:'道路独立模板、NetworkTools预览/应用/取消、NodeController过街、BetterBulldozer精确装饰删除/防重生恢复、Traffic原生清理/重置、TrafficLightManager相位/成员/完整放行掩码/模板。payload受桥接逐动作校验，默认dryRun=true（network会话操作除外）。先读docs/native-control.md中的模组契约。异步返回operationId后轮询cs2_mod_operation，不能以请求代替结果。需要桥接0.10.1。',annotations:write,
     inputSchema:{action:z.enum(modActions),payload:z.record(z.unknown())}},async({action,payload})=>{
     try{await requireVersion();return jsonResult(await bridgeJson(payloadPath('/build/mod/action',payload,{action}),30000));}catch(e){return errorResult(e);}});
 }

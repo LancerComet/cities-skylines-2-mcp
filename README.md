@@ -95,7 +95,7 @@ claude mcp add cs2 -- node <repo-path>\mcp-server\dist\index.js
 
 Start the game, load a save, then ask Claude: "How are my city's finances?", "Zone a residential area by the river", "Build a road connecting the industrial area to the highway".
 
-## Tool Reference (114 tools)
+## Tool Reference (117 tools)
 
 The tables below cover the original tools. The [complete tool catalog](docs/tool-reference.md)
 includes the additional facility, upgrade, terrain, resource, native road-layout and optional-mod tools.

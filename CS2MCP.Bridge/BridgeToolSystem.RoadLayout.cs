@@ -77,7 +77,7 @@ namespace CS2MCP
                 foreach (var part in parts)
                     CreateSubNet(part.Prefab, Entity.Null, part.Curve, part.Nodes, part.ParentMesh, part.Upgrades,
                         positions, origin, default(OwnerDefinition), default,
-                        default(Game.Buildings.BuildingUtils.LotInfo), false, ref random, CreationFlags.SubElevation);
+                        default(Game.Buildings.BuildingUtils.LotInfo), false, ref random, CreationFlags.SubElevation, independentLayout: true);
             }
             finally { positions.Dispose(); }
         }

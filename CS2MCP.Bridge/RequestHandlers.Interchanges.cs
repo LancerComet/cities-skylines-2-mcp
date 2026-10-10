@@ -200,14 +200,22 @@ namespace CS2MCP
                 }
                 var c = p["curve"];
                 var curve = new Bezier4x3(LayoutPoint(c?["a"]), LayoutPoint(c?["b"]), LayoutPoint(c?["c"]), LayoutPoint(c?["d"]));
-                if (!CheckNetElevation(prefabEntity, curve.a.y + elevation, out error) || !CheckNetElevation(prefabEntity, curve.d.y + elevation, out error)) return error;
                 foreach (var local in new[] { curve.a, curve.b, curve.c, curve.d })
                 {
-                    if (!math.all(math.isfinite(local)) || local.y + elevation < -30 || local.y + elevation > 60)
-                        return BridgeResponse.Error(400, $"第{i}段曲线点或相对高程不合法");
-                    var world = origin + math.mul(heading, local);
-                    if (math.abs(world.x) > 7168 || math.abs(world.z) > 7168)
+                    if (!math.all(math.isfinite(local))) return BridgeResponse.Error(400, $"第{i}段曲线点须有限数值");
+                    var world = origin + math.mul(heading, local) + new float3(0, elevation, 0);
+                    if (!math.all(math.isfinite(world)) || math.abs(world.x) > 7168 || math.abs(world.z) > 7168)
                         return BridgeResponse.Error(400, $"第{i}段超出地图范围");
+                    // 局部y是相对布局原点的坐标，UI高程是此处相对地面的高度；二者不能混用。
+                    if (!CheckNetElevation(prefabEntity, world.y - TerrainUtils.SampleHeight(ref terrain, world), out error)) return error;
+                }
+                float polygonLength = math.distance(curve.a.xz, curve.b.xz) + math.distance(curve.b.xz, curve.c.xz)
+                    + math.distance(curve.c.xz, curve.d.xz);
+                // 三次曲线速度上界为控制多边形长度的3倍，保证相邻采样水平间距不超过4m。
+                int heightSamples = math.max(1, (int)math.ceil(polygonLength * 3f / 4f));
+                for (int sample = 1; sample < heightSamples; sample++) {
+                    var world = origin + math.mul(heading, MathUtils.Position(curve, (float)sample / heightSamples)) + new float3(0, elevation, 0);
+                    if (!CheckNetElevation(prefabEntity, world.y - TerrainUtils.SampleHeight(ref terrain, world), out error)) return error;
                 }
                 if (!LayoutNode(p["nodes"]?["start"], out int start) || !LayoutNode(p["nodes"]?["end"], out int end))
                     return BridgeResponse.Error(400, $"第{i}段节点编号不合法");
@@ -224,6 +232,21 @@ namespace CS2MCP
                 curve.a.y += elevation; curve.b.y += elevation; curve.c.y += elevation; curve.d.y += elevation;
                 parts[i] = new RoadLayoutPart { Prefab = prefabEntity, Curve = curve, Nodes = new int2(start, end),
                     ParentMesh = new int2(meshStart, meshEnd), Upgrades = upgrades };
+            }
+            // 分合流的原生共享节点使用端点均值；均值处的地形也须独立遵守同一原生范围。
+            var nodePositions = new Dictionary<int, float4>();
+            foreach (var part in parts) {
+                foreach (var endpoint in new[] { new { id = part.Nodes.x, point = part.Curve.a }, new { id = part.Nodes.y, point = part.Curve.d } }) {
+                    if (endpoint.id < 0) continue;
+                    nodePositions.TryGetValue(endpoint.id, out var accumulated);
+                    nodePositions[endpoint.id] = accumulated + new float4(endpoint.point, 1);
+                }
+            }
+            foreach (var part in parts) foreach (int node in new[] { part.Nodes.x, part.Nodes.y }) {
+                if (node < 0) continue;
+                var value = nodePositions[node];
+                var world = origin + math.mul(heading, value.xyz / value.w);
+                if (!CheckNetElevation(part.Prefab, world.y - TerrainUtils.SampleHeight(ref terrain, world), out error)) return error;
             }
             if (TransitToolsBusy(out error)) return error;
             if (!World.GetExistingSystemManaged<BridgeToolSystem>().TryQueueRoadLayout(parts, origin, heading, firstPrefab, request))

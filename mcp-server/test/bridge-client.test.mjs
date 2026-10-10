@@ -81,6 +81,29 @@ test('native validation failure never invites automatic retry',async t=>{
   const base=await mock(t,(_,res)=>{res.writeHead(409);res.end('{"error":"OverlapExisting"}');});
   await assert.rejects(bridgeJson('/build/road',1000,base),error=>!error.safeToRetry && !error.mayHaveApplied);
 });
+test('native preview error locations survive MCP without changing retry semantics',async t=>{
+  const details=[{error:'OverlapExisting',location:{x:12,y:34,z:56}}];
+  const base=await mock(t,(_,res)=>{res.writeHead(409);res.end(JSON.stringify({error:'blocked',validationErrors:details}));});
+  await assert.rejects(bridgeJson('/build/road/connect',1000,base),error=>{
+    assert.deepEqual(JSON.parse(errorResult(error).content[0].text).validationErrors,details);
+    return !error.safeToRetry && !error.mayHaveApplied;
+  });
+});
+test('milestone reads use GET and explicit dismissal uses POST with uncertain failure metadata',async t=>{
+  const methods=[];
+  const base=await mock(t,(req,res)=>{
+    methods.push(req.method);
+    if(req.url.includes('dismiss=true')) {res.writeHead(500);res.end('{"error":"native dismissal failed"}');}
+    else res.end('{"pendingBefore":true}');
+  });
+  await bridgeJson('/game/milestone-popup',1000,base);
+  await bridgeJson('/game/milestone-popup?dismiss=false',1000,base);
+  await assert.rejects(bridgeJson('/game/milestone-popup?dismiss=true',1000,base),error=>error.mayHaveApplied&&!error.safeToRetry);
+  assert.deepEqual(methods,['GET','GET','POST']);
+  assert.equal(isMutation('/build/place?dryRun=true'),false);
+  assert.equal(isMutation('/build/place?dryRun=false'),true);
+  assert.equal(isMutation('/build/place'),true);
+});
 test('server errors retain uncertain mutation outcomes',async t=>{
   const base=await mock(t,(_,res)=>{res.writeHead(500);res.end('{"error":"failure after apply"}');});
   await assert.rejects(bridgeJson('/transit/lines/create',1000,base),error=>error.mayHaveApplied && !error.safeToRetry);

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Colossal.Mathematics;
 using Game.Prefabs;
@@ -283,15 +283,21 @@ namespace CS2MCP
                 return error;
             }
 
+            if (request.Query.ContainsKey("dryRun") && !request.TryGetBool("dryRun", out _))
+                return BridgeResponse.Error(400, "dryRun must be true or false; no placement queued");
+
             if (!request.Query.TryGetValue("prefab", out string prefabName) || string.IsNullOrEmpty(prefabName))
             {
                 return BridgeResponse.Error(400, "provide ?prefab=<name from /prefabs>");
             }
-            if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z))
+            if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z)
+                || !math.isfinite(x) || !math.isfinite(z) || math.abs(x) > kWorldHalfSize || math.abs(z) > kWorldHalfSize)
             {
                 return BridgeResponse.Error(400, "provide ?x=<float>&z=<float> world coordinates");
             }
-            request.TryGetFloat("rotation", out float rotationDegrees);
+            float rotationDegrees = 0;
+            if (request.Query.ContainsKey("rotation") && (!request.TryGetFloat("rotation", out rotationDegrees) || !math.isfinite(rotationDegrees)))
+                return BridgeResponse.Error(400, "rotation must be finite; no placement queued");
 
             if (!TryFindPrefabByName(BuildingPrefabQuery, prefabName, out Entity prefabEntity, out PrefabBase prefab)
                 && !TryFindPrefabByName(TreePrefabQuery, prefabName, out prefabEntity, out prefab))

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Colossal.Mathematics;
 using Game;
@@ -261,6 +261,87 @@ namespace CS2MCP
             return errors;
         }
 
+        // 只回读本次原生预览的错误位置，供复合道路和设施按实际冲突修正几何。
+        private List<object> CollectPlacementErrorLocations()
+        {
+            var rows = new List<object>();
+            using (var icons = m_ValidationIconQuery.ToEntityArray(Allocator.Temp))
+                foreach (var icon in icons)
+                {
+                    var owner = EntityManager.GetComponentData<Owner>(icon).m_Owner;
+                    if (!EntityManager.Exists(owner) || !EntityManager.HasComponent<Temp>(owner)) continue;
+                    var prefab = EntityManager.GetComponentData<PrefabRef>(icon).m_Prefab;
+                    if (!EntityManager.HasComponent<ToolErrorData>(prefab)) continue;
+                    object location = null;
+                    if (EntityManager.HasComponent<Game.Notifications.Icon>(icon))
+                    {
+                        var p = EntityManager.GetComponentData<Game.Notifications.Icon>(icon).m_Location;
+                        location = new { x = p.x, y = p.y, z = p.z };
+                    }
+                    rows.Add(new { error = EntityManager.GetComponentData<ToolErrorData>(prefab).m_Error.ToString(),
+                        temporaryOwner = new { index = owner.Index, version = owner.Version },
+                        ownerGeometry = DescribePreviewOwner(owner), location });
+                    if (rows.Count >= 64) break;
+                }
+            return rows;
+        }
+
+        // 回读原生校验前生成的几何，不用输入曲线冒充 CourseSplit 后的道路。
+        private object DescribePreviewOwner(Entity entity)
+        {
+            string prefab = null;
+            if (EntityManager.HasComponent<PrefabRef>(entity))
+            {
+                var reference = EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab;
+                prefab = World.GetOrCreateSystemManaged<PrefabSystem>().GetPrefab<PrefabBase>(reference)?.name;
+            }
+            object curve = null, position = null, elevation = null;
+            string kind = "other";
+            if (EntityManager.HasComponent<Game.Net.Curve>(entity))
+            {
+                var c = EntityManager.GetComponentData<Game.Net.Curve>(entity);
+                curve = new { a = PreviewPoint(c.m_Bezier.a), b = PreviewPoint(c.m_Bezier.b),
+                    c = PreviewPoint(c.m_Bezier.c), d = PreviewPoint(c.m_Bezier.d), length = c.m_Length };
+                kind = "network";
+            }
+            else if (EntityManager.HasComponent<Game.Net.Node>(entity))
+            {
+                position = PreviewPoint(EntityManager.GetComponentData<Game.Net.Node>(entity).m_Position);
+                kind = "node";
+            }
+            else if (EntityManager.HasComponent<Transform>(entity))
+            {
+                position = PreviewPoint(EntityManager.GetComponentData<Transform>(entity).m_Position);
+                kind = "object";
+            }
+            if (EntityManager.HasComponent<Game.Net.Elevation>(entity))
+            {
+                var e = EntityManager.GetComponentData<Game.Net.Elevation>(entity).m_Elevation;
+                elevation = new { start = e.x, end = e.y };
+            }
+            var temp = EntityManager.GetComponentData<Temp>(entity);
+            return new { prefab, kind, curve, position, elevation, flags = temp.m_Flags.ToString(),
+                original = new { index = temp.m_Original.Index, version = temp.m_Original.Version } };
+        }
+
+        private static object PreviewPoint(float3 p) => new { x = p.x, y = p.y, z = p.z };
+
+        private object CollectNativeRoadPreview()
+        {
+            if (m_PendingKind != OperationKind.RoadLayout) return null;
+            var rows = new List<object>();
+            bool complete = true;
+            using (var entities = m_PreviewCostQuery.ToEntityArray(Allocator.Temp))
+                foreach (var entity in entities)
+                {
+                    if (!EntityManager.HasComponent<Game.Net.Curve>(entity) || !EntityManager.HasComponent<Game.Net.Edge>(entity)) continue;
+                    if (rows.Count >= 256) { complete = false; break; }
+                    rows.Add(new { temporaryEntity = new { index = entity.Index, version = entity.Version },
+                        geometry = DescribePreviewOwner(entity) });
+                }
+            return new { complete, roads = rows, note = "原生临时道路，预览结束后清除；未施工或收费" };
+        }
+
         private void Activate()
         {
             m_Stage = Stage.CreateDefinitions;
@@ -364,6 +445,8 @@ namespace CS2MCP
                             applyMode = ApplyMode.Clear;
                             CompletePending(BridgeResponse.Json(new { dryRun = true, allowed, applied = false,
                                 prefab = m_PendingPrefab?.name, nativePreviewCost = NativePreviewCost(), errors = CollectPlacementErrors(),
+                                validationErrors = CollectPlacementErrorLocations(),
+                                nativeRoadPreview = CollectNativeRoadPreview(),
                                 note = "原生对象/复合资产预览已清除，未施工、未收费；实际放置须显式dryRun=false" }));
                         }
                         else if (GetAllowApply())
@@ -375,9 +458,10 @@ namespace CS2MCP
                         {
                             applyMode = ApplyMode.Clear;
                             List<string> errors = CollectPlacementErrors();
-                            CompletePending(BridgeResponse.Error(409,
+                            CompletePending(BridgeResponse.Json(new { error =
                                 "原生施工校验拒绝：" + (errors.Count > 0 ? string.Join(", ", errors)
-                                : "未返回具体错误图标；请核场址、地形、网络接入，不盲重放")));
+                                : "未返回具体错误图标；请核场址、地形、网络接入，不盲重放"),
+                                validationErrors = CollectPlacementErrorLocations() }, 409));
                         }
                         m_Stage = Stage.Finish;
                         break;

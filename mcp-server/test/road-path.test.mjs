@@ -25,7 +25,7 @@ for(const scenario of [
 ]) test(`road path preserves its prefix and stops on ${scenario.name}`,async t=>{
   let writes=0;
   const client=await connect(t,(req,res)=>{
-    if(req.url==='/ping'){res.end('{"version":"0.10.0"}');return;}
+    if(req.url==='/ping'){res.end('{"version":"0.10.1"}');return;}
     assert.equal(new URL(req.url,'http://localhost').pathname,'/build/road/connect');
     assert.equal(req.method,'POST');
     if(++writes===1)res.end('{"applied":true}');

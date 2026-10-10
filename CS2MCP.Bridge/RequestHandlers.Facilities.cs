@@ -52,6 +52,9 @@ namespace CS2MCP
                         foreach (var item in EntityManager.GetBuffer<BuildingUpgradeElement>(entity, true)) {
                             var u = item.m_Upgrade;
                             upgrades.Add(new { name = NativeName(u), localizedName = LocalizedAsset(u, "NAME"), locked = IsLocked(u),
+                                prefabType = World.GetOrCreateSystemManaged<PrefabSystem>().GetPrefab<PrefabBase>(u).GetType().Name,
+                                description = LocalizedAsset(u, "DESCRIPTION"),
+                                placementFlags = EntityManager.HasComponent<PlaceableObjectData>(u) ? EntityManager.GetComponentData<PlaceableObjectData>(u).m_Flags.ToString() : null,
                                 fixedExtension = EntityManager.HasComponent<BuildingExtensionData>(u),
                                 forbidMultiple = EntityManager.HasComponent<ServiceUpgradeData>(u) && EntityManager.GetComponentData<ServiceUpgradeData>(u).m_ForbidMultiple,
                                 repeatablePlacement = EntityManager.HasComponent<BuildingData>(u) && EntityManager.HasComponent<ServiceUpgradeData>(u) && !EntityManager.GetComponentData<ServiceUpgradeData>(u).m_ForbidMultiple,
@@ -82,7 +85,9 @@ namespace CS2MCP
 
         private object FacilityFacts(Entity entity)
         {
-            var prefixes = new[] { "City", "Local", "School", "Hospital", "Deathcare", "Welfare", "Police", "Prison", "Fire", "Disaster", "Shelter", "Telecom", "Mail", "Post", "Garbage", "Power", "Electric", "Solar", "Water", "Sewage", "Transport", "Parking", "Park", "Attraction", "ServiceUpkeep", "ServiceUpgrade", "ServiceCoverage", "ServiceConsumption", "Coverage", "Workplace", "BuildingExtension" };
+            // 港区、产业等专用系统含资源/仓储/闸门/吊装/处理字段，不限于通用服务容量。
+            // 名称仅筛选应读取的原生类型，不据此推断单位或功能；字段保持原样交叉核验。
+            var prefixes = new[] { "City", "Local", "School", "Hospital", "Deathcare", "Welfare", "Police", "Prison", "Fire", "Disaster", "Shelter", "Telecom", "Mail", "Post", "Garbage", "Power", "Electric", "Solar", "Water", "Sewage", "Transport", "Cargo", "Parking", "Park", "Attraction", "ServiceUpkeep", "ServiceUpgrade", "ServiceCoverage", "ServiceConsumption", "Coverage", "Workplace", "BuildingExtension", "Storage", "Resource", "InitialResource", "Gate", "Crane", "Stack", "Industrial", "Processing", "Extractor", "CommercialCompany", "EnclosedArea" };
             var result = new List<object>();
             using (var types = EntityManager.GetComponentTypes(entity, Allocator.Temp))
                 foreach (var component in types) {

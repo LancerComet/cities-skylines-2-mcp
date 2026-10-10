@@ -115,7 +115,7 @@ namespace CS2MCP
             if (request.TryGetBool("cancel", out bool cancel) && cancel)
             {
                 m_System.SetAutoPause(0);
-                sim.selectedSpeed = 0f;
+                PauseNativeSimulation();
                 return BridgeResponse.Json(new { cancelled = true, paused = true });
             }
 
@@ -123,14 +123,16 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(400, "provide ?hours=<in-game hours 0.1-96> (or ?cancel=true)");
             }
-            if (hours < 0.1f || hours > 96f) return BridgeResponse.Error(400, "hours must be 0.1..96");
+            if (!math.isfinite(hours) || hours < 0.1f || hours > 96f) return BridgeResponse.Error(400, "hours must be finite and 0.1..96");
             float speed = 4f;
             if (request.Query.ContainsKey("speed") && (!request.TryGetFloat("speed", out speed) || (speed != 1 && speed != 2 && speed != 4)))
                 return BridgeResponse.Error(400, "running speed must be native 1x/2x/4x");
 
             uint targetFrame = sim.frameIndex + (uint)(hours * kFramesPerHour);
+            if (!ReadClockGate(out var clockUI, out _, out _)) return BridgeResponse.Error(409, "native time UI controls or pause gate are unavailable");
             m_System.SetAutoPause(targetFrame);
-            sim.selectedSpeed = speed;
+            m_RequestedSimulationSpeed = speed;
+            SetNativeClock(clockUI, speed);
 
             return BridgeResponse.Json(new
             {
@@ -158,9 +160,12 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(503, "menu system unavailable");
             }
-            // 预览只读取游戏现有帧；不调用原生预览助手的八次Camera.Render。
+            bool includePreview = true;
+            if (request.Query.ContainsKey("includePreview") && !request.TryGetBool("includePreview", out includePreview))
+                return BridgeResponse.Error(400, "includePreview must be true or false");
+            // 前台只读取游戏现有帧；后台显式省略预览，均不额外渲染相机。
             // 异步管线结束仍需调用方核验主档时间、完整性与备份，不把Task返回值当落盘成功。
-            ScreenshotRunner.Ensure().Save(request, name);
+            ScreenshotRunner.Ensure().Save(request, name, includePreview);
             return null;
         }
 

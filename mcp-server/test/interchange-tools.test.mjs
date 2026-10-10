@@ -24,7 +24,7 @@ test('asset tools refuse old bridges and preserve preview, paging and Chinese ex
     requests.length=0;const result=await client.callTool({name,arguments:args});
     assert.equal(result.isError,true);assert.deepEqual(requests,['/ping']);
   }
-  version='0.10.0';requests.length=0;
+  version='0.10.1';requests.length=0;
   let result=await client.callTool({name:'cs2_interchange_info',arguments:{name:prefab,offset:100,limit:105}});
   assert.notEqual(result.isError,true);let url=new URL(requests.at(-1),'http://localhost');
   assert.equal(url.pathname,'/prefabs/interchange');assert.equal(url.searchParams.get('name'),prefab);

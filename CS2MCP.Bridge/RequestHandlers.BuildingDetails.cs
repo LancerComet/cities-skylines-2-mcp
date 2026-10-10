@@ -54,6 +54,15 @@ namespace CS2MCP
             row["transport"] = new { prefab = ModEntityComponents(prefab, "Game.Prefabs.Transport"),
                 operational = ModEntityComponents(entity, "Game.Buildings.Transport"),
                 note = "原生预制体与现场组件分别读取；基础容量不能代替安装扩建后的有效容量或已出车辆" };
+            if (EntityManager.HasComponent<Game.Buildings.PostFacility>(entity))
+            {
+                var inventory = new List<object>();
+                if (EntityManager.HasBuffer<Game.Economy.Resources>(entity))
+                    foreach (var resource in EntityManager.GetBuffer<Game.Economy.Resources>(entity, true))
+                        inventory.Add(new { resource = resource.m_Resource.ToString(), amount = resource.m_Amount });
+                row["postal"] = new { operational = ModEntityComponents(entity, "Game.Buildings.Post"), inventory,
+                    note = "原生邮件分类库存与派送请求，保留原始单位；车辆所有权数量不等于正在投递" };
+            }
             var ports = new List<object>();
             var nodes = new HashSet<Entity>();
             if (EntityManager.HasBuffer<Game.Net.SubNet>(entity)) foreach (var subnet in EntityManager.GetBuffer<Game.Net.SubNet>(entity, true)) {

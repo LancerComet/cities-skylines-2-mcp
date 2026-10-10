@@ -19,7 +19,7 @@ test('facility parking rejects old bridges before sending writes and uses native
   const args={index:123,version:1,fee:50};
   let result=await client.callTool({name:'cs2_set_facility_parking_fee',arguments:args});
   assert.equal(result.isError,true);assert.deepEqual(requests,['/ping']);
-  version='0.10.0';requests.length=0;
+  version='0.10.1';requests.length=0;
   result=await client.callTool({name:'cs2_set_facility_parking_fee',arguments:args});
   assert.notEqual(result.isError,true);
   const url=new URL(requests.at(-1),'http://localhost');assert.equal(url.pathname,'/building/parking-fee/set');

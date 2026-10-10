@@ -75,18 +75,23 @@ namespace CS2MCP
             base.OnGameLoadingComplete(purpose, mode);
             m_FrameIndexAtLoad = m_SimulationSystem.frameIndex;
             SimulationHasTickedSinceLoad = false;
+            AutoPauseTargetFrame = 0;
+            m_Handlers.ResetBackgroundSimulation();
+            m_Handlers.ResetRuntimeSettingsAfterLoad();
         }
 
         [Preserve]
         protected override void OnUpdate()
         {
+            m_Handlers.RestoreFrameLimit();
+            m_Handlers.ReconcileBackgroundSimulation();
             if (!SimulationHasTickedSinceLoad && m_SimulationSystem.frameIndex != m_FrameIndexAtLoad)
             {
                 SimulationHasTickedSinceLoad = true;
             }
             if (AutoPauseTargetFrame != 0 && m_SimulationSystem.frameIndex >= AutoPauseTargetFrame)
             {
-                m_SimulationSystem.selectedSpeed = 0f;
+                m_Handlers.PauseNativeSimulation();
                 AutoPauseTargetFrame = 0;
                 Mod.Log.Info("timed run finished, simulation auto-paused");
             }

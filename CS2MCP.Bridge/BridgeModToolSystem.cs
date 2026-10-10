@@ -48,6 +48,7 @@ namespace CS2MCP
         private Entity[] m_TrafficHandles;
         private string m_PriorityMode;
         private bool NodeTool => m_Data != null && new[] { "addNode", "removeNode", "slideNode" }.Contains((string)m_Data["tool"]);
+        private bool ManualApply => NodeTool || (string)m_Data?["tool"] == "shape";
         internal BridgeResponse StartTraffic(string action, Entity node)
         {
             if (Busy || m_ToolSystem.ignoreErrors) return BridgeResponse.Error(409, "another construction operation is in progress or ignoreErrors is enabled");
@@ -140,8 +141,8 @@ namespace CS2MCP
             if (action == "network.apply")
             {
                 if (m_State != "previewReady" || !CanApply()) return BridgeResponse.Error(409, "native preview not ready or validation rejected the operation");
-                m_ApplyRequested = true; m_State = NodeTool ? "applyQueued" : "applying"; m_Frame = UnityEngine.Time.frameCount; m_Deadline = DateTime.UtcNow.AddSeconds(30);
-                if (!NodeTool) OptionalModApi.Call(m_Tool, "RequestApply");
+                m_ApplyRequested = true; m_State = ManualApply ? "applyQueued" : "applying"; m_Frame = UnityEngine.Time.frameCount; m_Deadline = DateTime.UtcNow.AddSeconds(30);
+                if (!ManualApply) OptionalModApi.Call(m_Tool, "RequestApply");
                 return BridgeResponse.Json(new { operationId = m_Id, state = m_State, mayHaveApplied = true });
             }
             return BridgeResponse.Error(400, "unknown network action");
@@ -230,6 +231,14 @@ namespace CS2MCP
         }
         private void NodePreview(bool initial)
         {
+            RestoreNodeSelection(initial);
+            OptionalModApi.Write(m_Tool, "m_UpdateNeeded", true);
+            ((Unity.Jobs.JobHandle)OptionalModApi.Call(m_Tool, "Update", default(Unity.Jobs.JobHandle))).Complete();
+        }
+
+        /// <summary>恢复本次明确选择，不模拟悬停输入；应用前不重复生成或清除已校验预览。</summary>
+        private void RestoreNodeSelection(bool initial)
+        {
             string key = (string)m_Data["tool"]; var entity = Identity(m_Data["entity"]);
             if (initial && !(bool)OptionalModApi.Call(m_Tool, "FilterEligibleEntity", entity)) throw new ArgumentException("Network Tools native eligibility rejected this entity");
             if (key == "addNode")
@@ -250,8 +259,6 @@ namespace CS2MCP
                 if (initial) OptionalModApi.Call(m_Tool, "StartDrag", entity);
                 OptionalModApi.Call(m_Tool, "SnapControlPoint", Point(m_Data["position"]), default(Unity.Jobs.JobHandle));
             }
-            OptionalModApi.Write(m_Tool, "m_UpdateNeeded", true);
-            ((Unity.Jobs.JobHandle)OptionalModApi.Call(m_Tool, "Update", default(Unity.Jobs.JobHandle))).Complete();
         }
 
         [Preserve] protected override void OnUpdate()
@@ -268,6 +275,7 @@ namespace CS2MCP
                 if (m_State == "applyQueued")
                 {
                     if (!CanApply()) { Finish("failed", "native validation changed before apply"); return; }
+                    if (NodeTool) RestoreNodeSelection(false);
                     ((Unity.Jobs.JobHandle)OptionalModApi.Call(m_Tool, "Apply", default(Unity.Jobs.JobHandle))).Complete();
                     m_State = "applying"; m_Frame = UnityEngine.Time.frameCount;
                 }

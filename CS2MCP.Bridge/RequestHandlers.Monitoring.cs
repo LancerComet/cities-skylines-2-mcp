@@ -1,16 +1,93 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Game.Common;
 using Game.Economy;
 using Game.Objects;
 using Game.Prefabs;
+using Game.Settings;
 using Unity.Collections;
 using Unity.Entities;
+using UnityEngine;
 
 namespace CS2MCP
 {
     public sealed partial class RequestHandlers
     {
+        private static string FrameLimitPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "Low", "Colossal Order", "Cities Skylines II", "Mods", "CS2MCP", "frame-limit.txt");
+        private bool m_FrameLimitRestored;
+        private bool m_RuntimeSettingsLoadComplete;
+
+        public void ResetRuntimeSettingsAfterLoad()
+        {
+            m_FrameLimitRestored = false;
+            m_RuntimeSettingsLoadComplete = true;
+        }
+
+        /// <summary>只恢复本桥接接口明确保存的基础帧率上限，不改变画质或显卡驱动设置。</summary>
+        public void RestoreFrameLimit()
+        {
+            // 图形设置无需等待解锁重放或模拟推进；暂停加载也必须恢复限帧。
+            // GameManager 在完成加载时会先重置 targetFrameRate，之后才应用本地限帧。
+            var manager = Game.SceneFlow.GameManager.instance;
+            if (m_FrameLimitRestored || !m_RuntimeSettingsLoadComplete || SharedSettings.instance?.graphics == null
+                || manager == null || manager.isGameLoading || manager.gameMode != Game.GameMode.Game) return;
+            m_FrameLimitRestored = true;
+            try {
+                if (File.Exists(FrameLimitPath) && int.TryParse(File.ReadAllText(FrameLimitPath), out int limit) && limit >= 30 && limit <= 240)
+                {
+                    SharedSettings.instance.graphics.vSync = false;
+                    SharedSettings.instance.graphics.ApplyAndSave();
+                    Application.targetFrameRate = limit;
+                }
+            } catch (IOException e) { Mod.Log.Warn($"限帧配置读取失败，保留当前设置：{e.Message}"); }
+            catch (UnauthorizedAccessException e) { Mod.Log.Warn($"限帧配置无法读取，保留当前设置：{e.Message}"); }
+        }
+
+        private BridgeResponse GetGraphicsSettings()
+        {
+            return BridgeResponse.Json(new {
+                vSync = SharedSettings.instance?.graphics.vSync,
+                appliedVSyncCount = QualitySettings.vSyncCount,
+                baseFrameRateLimit = Application.targetFrameRate,
+                performancePreference = SharedSettings.instance?.general.performancePreference.ToString(),
+                automaticSaveEnabled = SharedSettings.instance?.general.autoSave,
+                frameLimitRestoredForCurrentLoad = m_FrameLimitRestored,
+                driverDisplayFps = (float?)null,
+                note = "base rendering limit only; driver frame-generation multiplier and post-generation FPS are not exposed by the game"
+            });
+        }
+
+        private BridgeResponse SetGraphicsSettings(BridgeRequest request)
+        {
+            if (SharedSettings.instance?.graphics == null) return BridgeResponse.Error(409, "native settings are not ready");
+            bool? requestedVSync = null;
+            if (request.Query.ContainsKey("vSync")) {
+                if (!request.TryGetBool("vSync", out bool parsedVSync))
+                    return BridgeResponse.Error(400, "vSync must be true or false");
+                requestedVSync = parsedVSync;
+            }
+            int? requestedLimit = null;
+            if (request.Query.TryGetValue("maxFps", out string raw)) {
+                if (!int.TryParse(raw, out int limit) || limit < 30 || limit > 240)
+                    return BridgeResponse.Error(400, "maxFps must be an integer from 30 to 240");
+                requestedLimit = limit;
+            }
+            if (requestedLimit.HasValue && (requestedVSync ?? SharedSettings.instance.graphics.vSync))
+                return BridgeResponse.Error(400, "maxFps requires vSync=false; Unity ignores the rendering limit while vertical sync is active");
+            // 所有参数先校验，再持久化及应用；非法布尔值不能留下半套设置。
+            if (requestedLimit.HasValue) {
+                Directory.CreateDirectory(Path.GetDirectoryName(FrameLimitPath));
+                File.WriteAllText(FrameLimitPath, requestedLimit.Value.ToString());
+            }
+            if (requestedVSync.HasValue) {
+                SharedSettings.instance.graphics.vSync = requestedVSync.Value;
+                SharedSettings.instance.graphics.ApplyAndSave();
+            }
+            if (requestedLimit.HasValue) Application.targetFrameRate = requestedLimit.Value;
+            return GetGraphicsSettings();
+        }
+
         private T CombinedFacilityData<T>(Entity building, Entity prefab) where T : unmanaged, IComponentData, ICombineData<T>
         {
             T data = EntityManager.GetComponentData<T>(prefab);

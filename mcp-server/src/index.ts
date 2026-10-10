@@ -18,8 +18,8 @@ async function requirePrecisionBridge(label = "精细施工") {
   const ping = await bridgeJson("/ping",3000) as {version?:string};
   const match = ping.version?.match(/^(\d+)\.(\d+)\.(\d+)/);
   const parts = match?.slice(1).map(Number);
-  if (!parts || parts[0]*1000000+parts[1]*1000+parts[2] < 10000)
-    throw new BridgeError(`${label}需要桥接0.10.0或更高；当前${ping.version ?? "未知"}，不能让旧桥接静默忽略新参数。`);
+  if (!parts || parts[0]*1000100+parts[1]*1000+parts[2] < 10001)
+    throw new BridgeError(`${label}需要桥接0.10.1或更高；当前${ping.version ?? "未知"}，不能让旧桥接静默忽略新参数。`);
 }
 
 const roadPathSegment = z.object({
@@ -40,64 +40,64 @@ function validateRoadPath(segments:z.infer<typeof roadPathSegment>[]) {
   }
 }
 
-const server = new McpServer({ name: "cs2-mcp", version: "0.10.0" });
+const server = new McpServer({ name: "cs2-mcp", version: "0.10.1" });
 
 server.registerTool("cs2_facility_parking_fees", {
   title: "读取全部公共设施停车费",
-  description: "读取原生允许付费停车的停车设施与公共服务建筑：当前启用、实际政策值、原生滑块上下限。手工道路停车使用整体市辖区收费。需要桥接0.10.0。",
+  description: "读取原生允许付费停车的停车设施与公共服务建筑：当前启用、实际政策值、原生滑块上下限。手工道路停车使用整体市辖区收费。需要桥接0.10.1。",
   annotations: { readOnlyHint:true, destructiveHint:false, openWorldHint:false }, inputSchema: {},
 }, async()=>{try {await requirePrecisionBridge("公共设施停车收费");return jsonResult(await bridgeJson("/city/facility-parking"));}catch(e){return errorResult(e);}});
 
 server.registerTool("cs2_set_facility_parking_fee", {
   title: "设置公共设施原生停车费",
-  description: "通过建筑面板 PaidParking 原生政策设置停车费，严格遵守当前原生上限与解锁，不修改泊位或政策预制体。入队后再次读取确认。需要桥接0.10.0。",
+  description: "通过建筑面板 PaidParking 原生政策设置停车费，严格遵守当前原生上限与解锁，不修改泊位或政策预制体。入队后再次读取确认。需要桥接0.10.1。",
   annotations: { readOnlyHint:false, destructiveHint:false, openWorldHint:false },
   inputSchema: {index:z.number().int().nonnegative(),version:z.number().int().positive(),fee:z.number().finite().nonnegative()},
 }, async args=>{try {await requirePrecisionBridge("公共设施停车收费");return jsonResult(await bridgeJson(`/building/parking-fee/set?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`));}catch(e){return errorResult(e);}});
 registerModTools(server,()=>requirePrecisionBridge("模组原生接入"),()=>requirePrecisionBridge("原生对象预览"));
 registerInterchangeTools(server,()=>requirePrecisionBridge("原生立交资产"));
-registerRoadLayoutTool(server,()=>requirePrecisionBridge("原生道路布局复刻及正常收费"));
+registerRoadLayoutTool(server,()=>requirePrecisionBridge("原生道路布局世界高程范围校验"));
 registerRoadLayoutRemovalTool(server,()=>requirePrecisionBridge("原生批量拆路"));
 
 server.registerTool("cs2_facility_catalog", {
   title: "完整原生公共设施与扩建盘点",
-  description: "一次按原生服务和菜单归属读取非成长设施及标志性建筑（isSignature单列）：说明、费用、尺寸、锁定、容量/效果原始字段、扩建与实际已建位置。固定扩建随父设施列出；目录资格不代替正常放置与运营验收。需要桥接0.10.0。",
+  description: "一次按原生服务和菜单归属读取非成长设施及标志性建筑（isSignature单列）：说明、费用、尺寸、锁定、原始容量/效果、正常升级及现场安装数量/位置。固定扩建随父设施列出；空升级数组表示当前原生菜单无手动升级。目录资格不代替正常放置与运营验收。需要桥接0.10.1。",
   annotations: {readOnlyHint:true, destructiveHint:false, openWorldHint:false}, inputSchema: {},
 }, async()=>{try{await requirePrecisionBridge("公共设施完整盘点");return jsonResult(await bridgeJson('/prefabs/facilities'));}catch(e){return errorResult(e);}});
 
 server.registerTool("cs2_signature_buildings", {
   title: "全部五类原生标志性建筑清单",
-  description: "按原生SignatureBuildingData读取住宅、混合用途、商业、工业、办公标志性建筑，含所属分区、正常解锁/内容可用性、实际已建位置、占地和原生全城效果。名称相似的升级与普通成长建筑不混入。需要桥接0.10.0。",
+  description: "按原生SignatureBuildingData读取住宅、混合用途、商业、工业、办公标志性建筑，含所属分区、正常解锁/内容可用性、实际已建位置、占地和原生全城效果。名称相似的升级与普通成长建筑不混入。需要桥接0.10.1。",
   annotations: {readOnlyHint:true,destructiveHint:false,openWorldHint:false}, inputSchema: {},
 }, async()=>{try{await requirePrecisionBridge("标志性建筑清单");return jsonResult(await bridgeJson('/prefabs/signatures'));}catch(e){return errorResult(e);}});
 
 server.registerTool("cs2_move_building", {
   title: "正常搬迁已有建筑",
-  description: "原生ObjectTool的Relocate预览、碰撞/资金校验、应用流程；只接受独立手动建筑/标志性建筑，不移动普通分区成长楼、专门产业占位母体或单独子物体。现有专门产业优先原位扩围，成套迁移未接入。普通建筑的扩建与内部结构仍须在应用后独立复核入口、水电、经营和升级；不支持force。dryRun仅位置计算。需要桥接0.10.0。",
+  description: "原生ObjectTool的Relocate预览、碰撞/资金校验、应用流程；只接受独立手动建筑/标志性建筑，不移动普通分区成长楼、专门产业占位母体或单独子物体。现有专门产业优先原位扩围，成套迁移未接入。普通建筑的扩建与内部结构仍须在应用后独立复核入口、水电、经营和升级；不支持force。dryRun仅位置计算。需要桥接0.10.1。",
   annotations:{readOnlyHint:false,destructiveHint:true,openWorldHint:false},
   inputSchema:{index:z.number().int(),version:z.number().int(),x:z.number().finite(),z:z.number().finite(),rotation:z.number().finite().optional(),dryRun:z.boolean().optional()},
 }, async args=>{try{await requirePrecisionBridge("原生建筑搬迁");return jsonResult(await bridgeJson(`/build/building/move?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000));}catch(e){return errorResult(e);}});
 
 server.registerTool("cs2_natural_resources", {
   title: "原生资源图限定片区取样",
-  description: "只读石油、矿石、肥沃土地、鱼类的原生格基础量/已使用量/差值，注明格号、尺度、时间和帧。不是吨、百分比或产出预测，不含城市加成/多边形积分，森林使用独立树木数据。粗网格可能漏小矿带；不写资源，不调用编辑器。需要桥接 0.10.0。",
+  description: "只读石油、矿石、肥沃土地、鱼类的原生格基础量/已使用量/差值，注明格号、尺度、时间和帧。不是吨、百分比或产出预测，不含城市加成/多边形积分，森林使用独立树木数据。粗网格可能漏小矿带；不写资源，不调用编辑器。需要桥接 0.10.1。",
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   inputSchema: { x:z.number().finite().min(-7168).max(7168), z:z.number().finite().min(-7168).max(7168), radius:z.number().finite().min(50).max(7168), resolution:z.number().int().min(4).max(64).default(16) },
 }, async args=>{try {await requirePrecisionBridge("原生资源取样");return jsonResult(await bridgeJson(`/map/natural-resources?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`));}catch(e){return errorResult(e);}});
 
 server.registerTool("cs2_extractor_areas", {
   title: "读取建筑自有采掘区域",
-  description: "有界读取指定建筑的原生自有区域或指定区域：边界、入口、所属、原生编辑限制、资源与采掘计数。原始计数不是吨或月产量，区域存在不代表企业投产。需要桥接 0.10.0。",
+  description: "有界读取指定建筑的原生自有区域或指定区域：边界、入口、所属、原生编辑限制、资源与采掘计数。原始计数不是吨或月产量，区域存在不代表企业投产。需要桥接 0.10.1。",
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   inputSchema: { index: z.number().int(), version: z.number().int() },
-}, async args => { try { await requirePrecisionBridge( "采掘区域读取"); return jsonResult(await bridgeJson(`/city/extractor-areas?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`)); } catch(e) { return errorResult(e); } });
+}, async args => { try { await requirePrecisionBridge("采掘区域读取"); return jsonResult(await bridgeJson(`/city/extractor-areas?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`)); } catch(e) { return errorResult(e); } });
 
 server.registerTool("cs2_edit_extractor_area", {
   title: "编辑已有原生采掘区域",
-  description: "只编辑正常建筑自有且原生允许编辑的采掘 Lot，走原生预览/校验/应用。nodes 不重复闭合点，前两个入口节点须保持原坐标和顺序；保留所属与缓存，遵守原生半径、已购土地和碰撞。dryRun 只检查资格与多边形，不是碰撞/费用/资源/投产预览。不创建独立或隐形资产，不支持 force。需要桥接 0.10.0。",
+  description: "只编辑正常建筑自有且原生允许编辑的采掘 Lot，走原生预览/校验/应用。nodes 不重复闭合点，前两个入口节点须保持原坐标和顺序；保留所属与缓存，遵守原生半径、已购土地和碰撞。dryRun 只检查资格与多边形，不是碰撞/费用/资源/投产预览。不创建独立或隐形资产，不支持 force。需要桥接 0.10.1。",
   annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   inputSchema: { index: z.number().int(), version: z.number().int(), nodes: z.array(z.object({ x: z.number().finite(), z: z.number().finite() })).min(3).max(64), dryRun: z.boolean().optional() },
-}, async ({index,version,nodes,dryRun}) => { try { await requirePrecisionBridge( "采掘区域编辑"); const params=new URLSearchParams({index:String(index),version:String(version),nodes:JSON.stringify(nodes)}); if(dryRun!==undefined)params.set("dryRun",String(dryRun)); return jsonResult(await bridgeJson(`/build/extractor-area/edit?${params}`,30000)); } catch(e) { return errorResult(e); } });
+}, async ({index,version,nodes,dryRun}) => { try { await requirePrecisionBridge("采掘区域编辑"); const params=new URLSearchParams({index:String(index),version:String(version),nodes:JSON.stringify(nodes)}); if(dryRun!==undefined)params.set("dryRun",String(dryRun)); return jsonResult(await bridgeJson(`/build/extractor-area/edit?${params}`,30000)); } catch(e) { return errorResult(e); } });
 
 server.registerTool("cs2_skyve_status", {
   title: "Skyve 模组、兼容性与日志诊断",
@@ -209,9 +209,25 @@ server.registerTool("cs2_save_settings", {
   title: "读取原生自动存档设置", description: "读取真实秒数、原生轮换数量；原生自动存档与手动主档独立。", inputSchema: {},
 }, async () => { try { return jsonResult(await bridgeJson("/settings/saves")); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_set_save_settings", {
-  title: "设置独立原生自动存档", description: "使用游戏原生菜单定时与轮换设置；当前1/2/5/10/30/60分钟，20分钟不是原生菜单选项，不定时覆盖手动主档。原生轮换总数为全用户数据目录自动档范围。",
+  title: "设置独立原生自动存档", description: "使用游戏原生菜单定时与轮换设置；当前1/2/5/10/30/60分钟，20分钟不是原生菜单选项，不定时覆盖手动主档。原生轮换总数为全本机自动档范围。",
   inputSchema: { enabled:z.boolean().optional(), intervalSeconds:z.union([z.literal(60),z.literal(120),z.literal(300),z.literal(600),z.literal(1800),z.literal(3600)]).optional(), retentionCount:z.union([z.literal(1),z.literal(2),z.literal(3),z.literal(10)]).optional() },
 }, async (args) => { const params = new URLSearchParams(); for (const [key,value] of Object.entries(args)) if (value !== undefined) params.set(key,String(value)); try { return jsonResult(await bridgeJson(`/settings/saves/set?${params}`)); } catch(err) { return errorResult(err); } });
+server.registerTool("cs2_graphics_settings", {
+  title: "游戏帧率设置", description: "读取原生垂直同步、基础渲染帧率上限；显卡驱动插帧后的帧率不在游戏内可读。", inputSchema: {},
+}, async () => { try { return jsonResult(await bridgeJson("/settings/graphics")); } catch (err) { return errorResult(err); } });
+server.registerTool("cs2_set_graphics_settings", {
+  title: "设置游戏基础帧率与垂直同步", description: "使用原生设置关闭/开启垂直同步，并保存本地基础帧率上限；不改变画质与驱动插帧。",
+  inputSchema: { maxFps: z.number().int().min(30).max(240).optional(), vSync: z.boolean().optional() },
+}, async ({ maxFps, vSync }) => {
+  const params = new URLSearchParams();
+  if (maxFps !== undefined) params.set("maxFps", String(maxFps));
+  if (vSync !== undefined) params.set("vSync", String(vSync));
+  try {
+    await requirePrecisionBridge("图形参数校验与暂停加载限帧恢复");
+    return jsonResult(await bridgeJson(`/settings/graphics/set?${params}`));
+  } catch (err) { return errorResult(err); }
+});
+
 server.registerTool(
   "cs2_game_state",
   {
@@ -277,26 +293,41 @@ server.registerTool(
     description:
       "Control the simulation clock: pause/unpause the game and/or set the simulation speed " +
       "(0 = paused, 1 = normal, 2 = double, 4 = fastest UI speed). " +
-      "Returns the resulting state.",
+      "Returns the resulting state. backgroundSimulation explicitly enables this-load-only background running; native menu/save/error pause barriers remain active.",
     inputSchema: {
       paused: z.boolean().optional().describe("true to pause, false to resume"),
       speed: z.union([z.literal(0),z.literal(1),z.literal(2),z.literal(4)]).optional().describe("native paused/1x/2x/4x"),
+      backgroundSimulation: z.boolean().optional().describe("Enable background simulation for this loaded save only; does not bypass native pause barriers"),
     },
   },
-  async ({ paused, speed }) => {
-    if (paused === undefined && speed === undefined) {
-      return errorResult(new Error("provide at least one of: paused, speed"));
+  async ({ paused, speed, backgroundSimulation }) => {
+    if (paused === undefined && speed === undefined && backgroundSimulation === undefined) {
+      return errorResult(new Error("provide at least one of: paused, speed, backgroundSimulation"));
     }
     const params = new URLSearchParams();
     if (speed !== undefined) params.set("speed", String(speed));
     if (paused !== undefined) params.set("paused", String(paused));
+    if (backgroundSimulation !== undefined) params.set("backgroundSimulation", String(backgroundSimulation));
     try {
+      if (backgroundSimulation !== undefined) await requirePrecisionBridge("本次加载的原生后台模拟控制");
       return jsonResult(await bridgeJson(`/sim/control?${params.toString()}`));
     } catch (err) {
       return errorResult(err);
     }
   },
 );
+
+server.registerTool("cs2_milestone_popup", {
+  title: "读取或确认已达到的原生里程碑通知",
+  description: "读取正常解锁后待确认的通知；dismiss=true调用原生继续动作。不能解锁、加钱、加点或消除错误/保存暂停屏障。需要桥接0.10.1。",
+  annotations: {readOnlyHint:false,destructiveHint:false,openWorldHint:false},
+  inputSchema: {dismiss:z.boolean().optional()},
+}, async ({dismiss})=>{
+  try {
+    await requirePrecisionBridge("原生里程碑通知确认");
+    return jsonResult(await bridgeJson(`/game/milestone-popup${dismiss===undefined?'':`?dismiss=${dismiss}`}`));
+  } catch(err) {return errorResult(err);}
+});
 
 server.registerTool(
   "cs2_screenshot",
@@ -558,20 +589,23 @@ server.registerTool(
       "-7000 to +7000 on each axis, use cs2_list_buildings to see coordinates of existing buildings for " +
       "reference). Height is sampled from the terrain automatically. The game validates the placement " +
       "(collisions, terrain, water) and the call fails with an explanation if blocked. Costs city money " +
-      "like a normal player action. Verify the result with cs2_screenshot or cs2_list_buildings.",
+      "like a normal player action. dryRun=true uses native placement preview, clears it without construction or charges, and needs bridge 0.10.1. Verify the result with cs2_screenshot or cs2_list_buildings.",
     inputSchema: {
       prefab: z.string().describe("Exact prefab name from cs2_find_prefabs"),
       x: z.number().describe("World X coordinate (meters)"),
       z: z.number().describe("World Z coordinate (meters)"),
       rotation: z.number().optional().describe("Rotation around Y axis in degrees (default 0)"),
       force: z.literal(false).optional().describe("正常发展规则只接受 false；不能绕过解锁或碰撞"),
+      dryRun: z.boolean().optional().describe("Native collision/cost preview only; no construction or charges"),
     },
   },
-  async ({ prefab, x, z, rotation, force }) => {
+  async ({ prefab, x, z, rotation, force, dryRun }) => {
     const params = new URLSearchParams({ prefab, x: String(x), z: String(z) });
     if (rotation !== undefined) params.set("rotation", String(rotation));
     if (force) params.set("force", "true");
+    if (dryRun !== undefined) params.set("dryRun", String(dryRun));
     try {
+      if (dryRun !== undefined) await requirePrecisionBridge("正常建筑原生预览");
       return jsonResult(await bridgeJson(`/build/place?${params.toString()}`, 15_000));
     } catch (err) {
       return errorResult(err);
@@ -585,7 +619,7 @@ server.registerTool(
     title: "Build a road segment",
     description:
       "Build any network segment between two world coordinates (terrain-following): roads, train tracks, " +
-      "pedestrian paths, power lines, pipes ; any prefab from cs2_find_prefabs category 'road' or 'net'. " +
+      "pedestrian paths, power lines, pipes ;any prefab from cs2_find_prefabs category 'road' or 'net'. " +
       "Straight by default; pass cx/cz for a curved segment through that control point. Length 8-1500m. " +
       "Endpoints on existing nodes connect to them. Costs city money; fails with an explanation if blocked.",
     inputSchema: {
@@ -761,7 +795,7 @@ server.registerTool(
     title: "Demolish a building or road segment",
     description:
       "Demolish (bulldoze) one building (from cs2_list_buildings) or road segment (from cs2_list_roads) " +
-      "identified by its entity index and version. Irreversible ; double-check the target first.",
+      "identified by its entity index and version. Irreversible ;double-check the target first.",
     inputSchema: {
       index: z.number().int().describe("Entity index from cs2_list_buildings"),
       version: z.number().int().describe("Entity version from cs2_list_buildings"),
@@ -790,7 +824,7 @@ server.registerTool(
     description:
       "Point the gameplay camera: set the pivot (look-at world coordinates; height auto-sampled from " +
       "terrain unless y given), compass rotation angleX (degrees), tilt angleY (0-89) and zoom distance. " +
-      "Combine with cs2_screenshot to LOOK at any place in the city ; the AI's own eyes.",
+      "Combine with cs2_screenshot to LOOK at any place in the city ;the AI's own eyes.",
     inputSchema: {
       x: z.number().min(-7168).max(7168).optional().describe("Pivot X (requires z)"),
       z: z.number().min(-7168).max(7168).optional().describe("Pivot Z (requires x)"),
@@ -813,8 +847,8 @@ server.registerTool(
     if (edgeScrolling !== undefined) params.set("edgeScrolling", String(edgeScrolling));
     if (clearInfoView !== undefined) params.set("clearInfoView", String(clearInfoView));
     try {
-      if (edgeScrolling !== undefined) await requirePrecisionBridge( "相机边缘滚动设置");
-      if (clearInfoView !== undefined) await requirePrecisionBridge( "原生信息视图清除");
+      if (edgeScrolling !== undefined) await requirePrecisionBridge("相机边缘滚动设置");
+      if (clearInfoView !== undefined) await requirePrecisionBridge("原生信息视图清除");
       return jsonResult(await bridgeJson(`/camera/set?${params.toString()}`));
     } catch (err) {
       return errorResult(err);
@@ -940,7 +974,7 @@ server.registerTool(
     try {
       const params = new URLSearchParams({index:String(index),version:String(version)});
       if(laneLimit !== undefined || laneOffset !== undefined) {
-        await requirePrecisionBridge( "车道分页");
+        await requirePrecisionBridge("车道分页");
         if(laneLimit !== undefined) params.set("laneLimit",String(laneLimit));
         if(laneOffset !== undefined) params.set("laneOffset",String(laneOffset));
       }
@@ -1071,16 +1105,19 @@ server.registerTool(
   {
     title: "Save the game",
     description:
-      "使用当前可见游戏画面，经原生保存流程完成后返回；调用后仍须核文件落盘、内层GUID和备份。 " +
+      "经原生保存流程完成后返回；后台隐藏时includePreview=false省略缩略图，不额外渲染或恢复前台。调用后仍须核文件落盘、内层GUID和备份。 " +
       "Default name is timestamped 'CS2MCP ...'.",
     inputSchema: {
       name: z.string().optional().describe("Save name (default: timestamped)"),
+      includePreview: z.boolean().optional().describe("后台隐藏保存设false；原生保存不生成缩略图，城市数据正常保存"),
     },
   },
-  async ({ name }) => {
+  async ({ name, includePreview }) => {
     const params = new URLSearchParams();
     if (name) params.set("name", name);
+    if (includePreview !== undefined) params.set("includePreview", String(includePreview));
     try {
+      if (includePreview !== undefined) await requirePrecisionBridge("后台原生保存与预览选项");
       return jsonResult(await bridgeJson(`/game/save?${params.toString()}`, 60_000));
     } catch (err) {
       return errorResult(err);
@@ -1179,10 +1216,10 @@ const transitType = z.enum(["bus", "tram", "metro", "train", "ship", "ferry"]);
 
 server.registerTool("cs2_transport_overview", {
   title: "全部客运与货运统计类型",
-  description: "原生交通信息页同源配置、显示／解锁、线路计数和居民／游客／货运统计，覆盖出租车、公交、铁路、电车、地铁、渡轮、客船、航空和公路货运。横线与零线路分别返回；原始货运单位不冒充人数或吨。需要桥接0.10.0。",
+  description: "原生交通信息页同源配置、显示／解锁、线路计数和居民／游客／货运统计，覆盖出租车、公交、铁路、电车、地铁、渡轮、客船、航空和公路货运。横线与零线路分别返回；原始货运单位不冒充人数或吨。需要桥接0.10.1。",
   inputSchema: {},
 }, async () => {
-  try { await requirePrecisionBridge( "全部交通统计"); return jsonResult(await bridgeJson("/transit/overview")); }
+  try { await requirePrecisionBridge("全部交通统计"); return jsonResult(await bridgeJson("/transit/overview")); }
   catch (err) { return errorResult(err); }
 });
 
@@ -1308,8 +1345,8 @@ server.registerTool(
     if (force) params.set("force", "true");
     try {
       if (cargo && type !== "train" && type !== "ship") throw new BridgeError("货运线路仅支持铁路和航运");
-      if (type === "ferry") await requirePrecisionBridge( "原生渡轮线路");
-      if (cargo !== undefined || type === "ship") await requirePrecisionBridge( "货运或航运线路");
+      if (type === "ferry") await requirePrecisionBridge("原生渡轮线路");
+      if (cargo !== undefined || type === "ship") await requirePrecisionBridge("货运或航运线路");
       if (cargo !== undefined) params.set("cargo", String(cargo));
       return jsonResult(await bridgeJson(`/transit/lines/create?${bridgeQueryString(params)}`, 15_000));
     } catch (err) {
@@ -1554,8 +1591,8 @@ server.registerTool(
       c1e: z.number().min(-30).max(60).optional().describe("First cubic handle elevation above terrain"),
       c2e: z.number().min(-30).max(60).optional().describe("Second cubic handle elevation above terrain"),
       heightTolerance: z.number().min(0).max(30).optional().describe("Vertical snapping tolerance, default 3m when e1/e2 given; explicit setting enables both-end height filtering"),
-      composition: z.enum(["auto","ground"]).optional().describe("正常结构方式：ground保留世界几何但将定义Elevation归零，可能挖填地形；不绕过校验。需要桥接0.10.0"),
-      constantSlope: z.boolean().optional().describe("直线按两端世界高度形成恒定坡度；不支持与曲线控制柄组合。需要桥接0.10.0"),
+      composition: z.enum(["auto","ground"]).optional().describe("正常结构方式：ground保留世界几何但将定义Elevation归零，可能挖填地形；不绕过校验。需要桥接0.10.1"),
+      constantSlope: z.boolean().optional().describe("直线按两端世界高度形成恒定坡度；不支持与曲线控制柄组合。需要桥接0.10.1"),
       dryRun: z.boolean().optional().describe("Resolve geometry and endpoints without building; not native collision/cost preview"),
       force: z.literal(false).optional().describe("正常发展规则只接受 false；不能绕过解锁或碰撞"),
     },
@@ -1576,7 +1613,7 @@ server.registerTool(
     for (const [key,value] of Object.entries({c1x,c1z,c2x,c2z,c1e,c2e,heightTolerance,composition,constantSlope,dryRun})) if(value!==undefined) params.set(key,String(value));
     if (force) params.set("force", "true");
     try {
-      if ([c1x,c1z,c2x,c2z,c1e,c2e,heightTolerance,dryRun].some(v=>v!==undefined)) await requirePrecisionBridge();
+      await requirePrecisionBridge("网络端点实际高程校验");
       if (composition !== undefined || constantSlope !== undefined) await requirePrecisionBridge("道路结构与恒坡");
       return jsonResult(await bridgeJson(`/build/road/connect?${bridgeQueryString(params)}`, 15_000));
     } catch (err) {
@@ -1923,4 +1960,4 @@ server.registerTool(
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error(`cs2-mcp 0.10.0 running on stdio (bridge: ${BRIDGE_URL})`);
+console.error(`cs2-mcp 0.10.1 running on stdio (bridge: ${BRIDGE_URL})`);
