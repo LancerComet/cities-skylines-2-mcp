@@ -68,8 +68,6 @@ namespace CS2MCP
             if (cubic && (!request.Query.ContainsKey("c1x") || !request.Query.ContainsKey("c1z") || !request.Query.ContainsKey("c2x") || !request.Query.ContainsKey("c2z")))
                 return BridgeResponse.Error(400, "a cubic curve requires both control handles c1x/c1z/c2x/c2z");
             if (!cubic && (request.Query.ContainsKey("c1e") || request.Query.ContainsKey("c2e"))) return BridgeResponse.Error(400, "c1e/c2e require cubic control handles");
-            foreach (string key in new[] { "e1", "e2", "c1e", "c2e" })
-                if (request.TryGetFloat(key, out float elevation) && (elevation < -30 || elevation > 60)) return BridgeResponse.Error(400, $"{key} must be -30..60 metres");
             float heightTolerance = request.TryGetFloat("heightTolerance", out float ht) ? ht : 3f;
             if (heightTolerance < 0 || heightTolerance > 30) return BridgeResponse.Error(400, "heightTolerance must be 0..30 metres");
             float snap = request.TryGetFloat("snap", out float rawSnap) ? math.clamp(rawSnap, 0f, 50f) : 8f;
@@ -116,12 +114,12 @@ namespace CS2MCP
             // Free ends can be raised (bridges, flyovers) or lowered (tunnels); snapped ends keep the height of what they join.
             if (start.Entity == Entity.Null && hasE1)
             {
-                start.Elevation = math.clamp(e1, -30f, 60f);
+                start.Elevation = e1;
                 start.Position.y += start.Elevation;
             }
             if (end.Entity == Entity.Null && hasE2)
             {
-                end.Elevation = math.clamp(e2, -30f, 60f);
+                end.Elevation = e2;
                 end.Position.y += end.Elevation;
             }
             // 显式参数不是全部输入：未传高程的自由端默认0，吸附端则采用真实世界位置。

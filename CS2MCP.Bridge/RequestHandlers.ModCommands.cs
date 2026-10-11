@@ -224,10 +224,15 @@ namespace CS2MCP
                 var tool = OptionalModApi.System(World, "NodeController", "NodeController.Main.Tools.NodeControllerTool");
                 var manager = OptionalModApi.Read(tool, "Manager");
                 var segment = OptionalModApi.Call(manager, "GetOrCreateSegmentEndData", edge, node);
+                // 与模组SelectNode流程一致，先读取真实端部基线；新记录的宽度/类型默认值不能用于写入。
+                OptionalModApi.Call(manager, "InitializeSegmentEnd", segment);
                 var property = segment.GetType().GetProperty("CrosswalkMode");
                 property.SetValue(segment, Enum.ToObject(property.PropertyType, mode));
                 OptionalModApi.Call(tool, "ApplyCrosswalkToEcs", segment);
-                return BridgeResponse.Json(new { applied = true, segment = OptionalModApi.JsonValue(segment), note = "回读真实步行路径和替代过街后才能验收" });
+                // 写入回执只读取稳定状态；完整几何的惰性getter可能尚未初始化，不能让序列化把已执行动作误报为失败。
+                return BridgeResponse.Json(new { applied = true, node = OptionalModApi.JsonValue(node), edge = OptionalModApi.JsonValue(edge),
+                    requestedMode = mode, storedMode = Convert.ToInt32(property.GetValue(segment)),
+                    note = "模组状态已回读；仍须检查原生横道和真实替代步行路径，不能据此重复提交" });
             }
             return BridgeResponse.Error(400, "action not implemented");
         }

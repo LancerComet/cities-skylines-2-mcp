@@ -63,16 +63,16 @@ test('mod mutations refuse older bridges and preserve Chinese structured payload
   t.after(()=>client.close());await client.connect(transport);
   const args={action:'signals.setName',payload:{entity:{index:23,version:1},name:'测试 + 路口',dryRun:true}};
   let result=await client.callTool({name:'cs2_mod_action',arguments:args});assert.equal(result.isError,true);assert.deepEqual(requests,['/ping']);
-  version='0.10.1';requests.length=0;result=await client.callTool({name:'cs2_mod_action',arguments:args});assert.notEqual(result.isError,true);
+  version='0.10.2';requests.length=0;result=await client.callTool({name:'cs2_mod_action',arguments:args});assert.notEqual(result.isError,true);
   let url=new URL(requests.at(-1),'http://localhost');assert.equal(url.pathname,'/build/mod/action');assert.deepEqual(JSON.parse(url.searchParams.get('payload')),args.payload);
   version='0.4.0';requests.length=0;result=await client.callTool({name:'cs2_place_prop',arguments:{prefab:'正常道具',x:10,z:20}});assert.equal(result.isError,true);assert.deepEqual(requests,['/ping']);
-  version='0.10.1';requests.length=0;result=await client.callTool({name:'cs2_place_prop',arguments:{prefab:'正常道具',x:10,z:20}});assert.notEqual(result.isError,true);
+  version='0.10.2';requests.length=0;result=await client.callTool({name:'cs2_place_prop',arguments:{prefab:'正常道具',x:10,z:20}});assert.notEqual(result.isError,true);
   url=new URL(requests.at(-1),'http://localhost');assert.equal(url.searchParams.get('dryRun'),'true');assert.equal(url.searchParams.has('force'),false);
   requests.length=0;result=await client.callTool({name:'cs2_mod_inspect',arguments:{mod:'Traffic',entity:{index:23}}});assert.equal(result.isError,true);assert.deepEqual(requests,[]);
 });
 
 test('extractor tools encode structured boundaries and refuse older bridges before editing',async t=>{
-  let version='0.10.1'; const requests=[];
+  let version='0.10.2'; const requests=[];
   const mock=createServer((req,res)=>{
     requests.push(req.url);
     res.setHeader('Content-Type','application/json');
@@ -88,7 +88,7 @@ test('extractor tools encode structured boundaries and refuse older bridges befo
   version='0.4.0';requests.length=0;
   let cameraResult=await client.callTool({name:'cs2_set_camera',arguments:{x:400,z:-590,edgeScrolling:false}});
   assert.equal(cameraResult.isError,true);assert.deepEqual(requests,['/ping']);
-  version='0.10.1';requests.length=0;
+  version='0.10.2';requests.length=0;
   cameraResult=await client.callTool({name:'cs2_set_camera',arguments:{x:400,z:-590,edgeScrolling:false}});
   assert.notEqual(cameraResult.isError,true);
   const cameraUrl=new URL(requests.at(-1),'http://localhost');
@@ -96,14 +96,16 @@ test('extractor tools encode structured boundaries and refuse older bridges befo
   assert.equal(cameraUrl.searchParams.get('x'),'400');assert.equal(cameraUrl.searchParams.get('z'),'-590');
   version='0.4.0';requests.length=0;
   let crossing=await client.callTool({name:'cs2_apply_road_service',arguments:{index:123,version:1,prefab:'Crosswalk',remove:true,dryRun:true}});
-  assert.equal(crossing.isError,true);assert.deepEqual(requests,['/ping']);
-  version='0.10.1';requests.length=0;
+  assert.equal(crossing.isError,true);assert.deepEqual(requests,[]);
+  version='0.10.2';requests.length=0;
   crossing=await client.callTool({name:'cs2_apply_road_service',arguments:{index:123,version:1,prefab:'Crosswalk',remove:true,invert:true,dryRun:true}});
+  assert.equal(crossing.isError,true);assert.deepEqual(requests,[]);
+  crossing=await client.callTool({name:'cs2_apply_road_service',arguments:{index:123,version:1,prefab:'RetainingWall01',remove:true,invert:true,dryRun:true}});
   assert.notEqual(crossing.isError,true);
   const crossingUrl=new URL(requests.at(-1),'http://localhost');
   assert.equal(crossingUrl.pathname,'/build/road-service');assert.equal(crossingUrl.searchParams.get('remove'),'true');
   assert.equal(crossingUrl.searchParams.get('invert'),'true');assert.equal(crossingUrl.searchParams.get('dryRun'),'true');
-  version='0.10.1';
+  version='0.10.2';
   const nodes=[{x:1980,z:-160},{x:1960,z:-160},{x:1970,z:100}];
   let result=await client.callTool({name:'cs2_edit_extractor_area',arguments:{index:123,version:1,nodes,dryRun:true}});
   assert.notEqual(result.isError,true);
@@ -130,7 +132,7 @@ test('extractor tools encode structured boundaries and refuse older bridges befo
   requests.length=0;
   result=await client.callTool({name:'cs2_apply_road_service',arguments:{index:123,version:1,prefab:'RetainingWall01'}});
   assert.equal(result.isError,true);assert.deepEqual(requests,['/ping']);
-  version='0.10.1';requests.length=0;
+  version='0.10.2';requests.length=0;
   result=await client.callTool({name:'cs2_connect_road',arguments:{...groundArgs,dryRun:true}});
   assert.notEqual(result.isError,true);
   url=new URL(requests.at(-1),'http://localhost');
@@ -139,7 +141,7 @@ test('extractor tools encode structured boundaries and refuse older bridges befo
   version='0.4.0';requests.length=0;
   result=await client.callTool({name:'cs2_move_building',arguments:{index:123,version:1,x:80,z:90,rotation:180}});
   assert.equal(result.isError,true);assert.deepEqual(requests,['/ping']);
-  version='0.10.1';requests.length=0;
+  version='0.10.2';requests.length=0;
   result=await client.callTool({name:'cs2_move_building',arguments:{index:123,version:1,x:80,z:90,rotation:180,dryRun:true}});
   assert.notEqual(result.isError,true);
   url=new URL(requests.at(-1),'http://localhost');

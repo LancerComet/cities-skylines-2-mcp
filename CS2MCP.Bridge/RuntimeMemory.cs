@@ -49,6 +49,8 @@ namespace CS2MCP
                         return snapshot;
                     }
                     snapshot.SetCommitBudget(status.TotalPageFile, status.AvailablePageFile, snapshot.privateMemoryBytes.Value);
+                    snapshot.totalPhysicalBytes = status.TotalPhysical;
+                    snapshot.availablePhysicalBytes = status.AvailablePhysical;
                 } else snapshot.unavailableReason = "unsupported_platform_for_native_memory_counters";
             } catch (Exception error) { snapshot.unavailableReason = error.GetType().Name; }
             return snapshot;
@@ -58,6 +60,7 @@ namespace CS2MCP
             public long? privateMemoryBytes, workingSetBytes;
             public long managedHeapBytes;
             public ulong? commitLimitBytes, availableCommitBytes;
+            public ulong? totalPhysicalBytes, availablePhysicalBytes;
             // 未知计数器不能当作内存充足；读取、保存及退出不受施工路由保护影响。
             public bool constructionAllowed = false;
             public string unavailableReason;

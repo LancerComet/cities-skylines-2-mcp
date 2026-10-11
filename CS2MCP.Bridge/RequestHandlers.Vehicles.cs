@@ -396,6 +396,7 @@ namespace CS2MCP
             float2 center = new float2(x, z);
 
             var edgeItems = new List<object>();
+            var roadNames = World.GetOrCreateSystemManaged<Game.UI.NameSystem>();
             var nodes = new Dictionary<Entity, List<Entity>>();
             int matched = 0;
             using (NativeArray<Entity> edges = (allNets ? NetEdgeQuery : TrafficRoadQuery).ToEntityArray(Allocator.Temp))
@@ -419,6 +420,12 @@ namespace CS2MCP
                         continue;
                     }
                     Edge ends = EntityManager.GetComponentData<Edge>(edge);
+                    Entity aggregate = EntityManager.HasComponent<Aggregated>(edge)
+                        ? EntityManager.GetComponentData<Aggregated>(edge).m_Aggregate : Entity.Null;
+                    // 同一街道的名字归原生Aggregate管理，分段编号只在本次加载有效。
+                    // 只读真实标签，便于按玩家截图中的街名定位，不从资产名猜道路身份。
+                    string streetName = aggregate != Entity.Null && EntityManager.Exists(aggregate)
+                        ? roadNames.GetRenderedLabelName(aggregate) : null;
                     float? flow = null;
                     float? volume = null;
                     if (EntityManager.HasComponent<Road>(edge))
@@ -430,6 +437,8 @@ namespace CS2MCP
                     edgeItems.Add(new
                     {
                         road = new { index = edge.Index, version = edge.Version },
+                        name = streetName,
+                        aggregate = aggregate == Entity.Null ? null : Ref(aggregate),
                         prefab,
                         startNode = ends.m_Start.Index,
                         endNode = ends.m_End.Index,

@@ -5,7 +5,7 @@
     <LangVersion>9.0</LangVersion>
     <AssemblyName>CS2MCP</AssemblyName>
     <RootNamespace>CS2MCP</RootNamespace>
-    <Version>0.10.1</Version>
+    <Version>0.10.2</Version>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <!-- Cities: Skylines II install path. Resolution order (first match wins):
          1) -p:GamePath=... on the dotnet build command line

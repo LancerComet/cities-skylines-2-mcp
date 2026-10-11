@@ -28,6 +28,13 @@ namespace CS2MCP
             Entity prefab = EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab;
             var names = World.GetOrCreateSystemManaged<Game.UI.NameSystem>();
             var row = new Dictionary<string, object> { ["entity"] = Ref(entity), ["name"] = names.GetRenderedLabelName(entity), ["prefab"] = NativeName(prefab) };
+            if (EntityManager.HasComponent<Game.Common.Destroyed>(entity)) {
+                var destroyed = EntityManager.GetComponentData<Game.Common.Destroyed>(entity);
+                row["destruction"] = new { cleared = destroyed.m_Cleared, cleanupComplete = Unity.Mathematics.math.isfinite(destroyed.m_Cleared) && destroyed.m_Cleared >= 1f,
+                    eventEntity = Ref(destroyed.m_Event), note = "原生灾害救援清障完成后才允许按原生费用重建；不修改此状态" };
+            } else row["destruction"] = null;
+            row["serviceOperationalComponents"] = ModEntityComponents(entity, "Game.Buildings.Deathcare");
+            row["fireOperationalComponents"] = ModEntityComponents(entity, "Game.Buildings.FireStation");
             if (EntityManager.HasComponent<Game.Areas.CurrentDistrict>(entity)) {
                 Entity district = EntityManager.GetComponentData<Game.Areas.CurrentDistrict>(entity).m_District;
                 row["district"] = district == Entity.Null ? null : new { entity = Ref(district), name = names.GetRenderedLabelName(district) };
@@ -51,6 +58,34 @@ namespace CS2MCP
             if (EntityManager.HasComponent<Game.Companies.WorkProvider>(entity)) row["employeeCapacity"] = EntityManager.GetComponentData<Game.Companies.WorkProvider>(entity).m_MaxWorkers;
             row["employees"] = EntityManager.HasBuffer<Game.Companies.Employee>(entity) ? EntityManager.GetBuffer<Game.Companies.Employee>(entity, true).Length : 0;
             row["ownedVehicleCount"] = EntityManager.HasBuffer<Game.Vehicles.OwnedVehicle>(entity) ? EntityManager.GetBuffer<Game.Vehicles.OwnedVehicle>(entity, true).Length : 0;
+            if (EntityManager.HasComponent<DeathcareFacilityData>(prefab)) {
+                var data = CombinedFacilityData<DeathcareFacilityData>(entity, prefab);
+                float immediate = EntityManager.HasBuffer<Game.Buildings.Efficiency>(entity)
+                    ? Game.Buildings.BuildingUtils.GetImmediateEfficiency(EntityManager.GetBuffer<Game.Buildings.Efficiency>(entity, true)) : 1f;
+                // 与原生GetEfficiency逐因子相乘后的百分位取整一致；Span重载不兼容桥接的net472引用。
+                float operatingEfficiency = product > 0 ? Unity.Mathematics.math.max(.01f, Unity.Mathematics.math.round(100f * product) / 100f) : 0;
+                var fleet = new List<object>();
+                if (EntityManager.HasBuffer<Game.Vehicles.OwnedVehicle>(entity))
+                    foreach (var owned in EntityManager.GetBuffer<Game.Vehicles.OwnedVehicle>(entity, true)) {
+                        Entity vehicle = owned.m_Vehicle;
+                        if (fleet.Count >= 128 || !EntityManager.Exists(vehicle)) continue;
+                        fleet.Add(new { entity = Ref(vehicle), prefab = PrefabNameOf(vehicle),
+                            deleted = EntityManager.HasComponent<Game.Common.Deleted>(vehicle),
+                            hearse = ModEntityComponents(vehicle, "Game.Vehicles.Hearse"),
+                            parked = ModEntityComponents(vehicle, "Game.Vehicles.ParkedCar"),
+                            lane = ModEntityComponents(vehicle, "Game.Vehicles.CarCurrentLane"),
+                            target = ModEntityComponents(vehicle, "Game.Common.Target"),
+                            path = ModEntityComponents(vehicle, "Game.Pathfind.PathOwner"),
+                            position = ModEntityComponents(vehicle, "Game.Objects.Transform") });
+                    }
+                row["deathcare"] = new { hearseCapacity = data.m_HearseCapacity,
+                    effectiveHearseCapacity = Game.Buildings.BuildingUtils.GetVehicleCapacity(Math.Min(operatingEfficiency, immediate), data.m_HearseCapacity),
+                    immediateEfficiency = immediate, storageCapacity = data.m_StorageCapacity,
+                    processingRateRaw = data.m_ProcessingRate, longTermStorage = data.m_LongTermStorage,
+                    waitingAtFacility = EntityManager.HasBuffer<Game.Buildings.Patient>(entity) ? EntityManager.GetBuffer<Game.Buildings.Patient>(entity, true).Length : 0,
+                    dispatch = ModEntityComponents(entity, "Game.Simulation.ServiceDispatch"), fleet,
+                    note = "容量按原生UpgradeUtils合并生效升级；processingRate为AI原始量，不冒充每月数量。车队限128项，只读真实派车/停驻/寻路，不修改调度。" };
+            }
             row["transport"] = new { prefab = ModEntityComponents(prefab, "Game.Prefabs.Transport"),
                 operational = ModEntityComponents(entity, "Game.Buildings.Transport"),
                 note = "原生预制体与现场组件分别读取；基础容量不能代替安装扩建后的有效容量或已出车辆" };

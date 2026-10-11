@@ -83,10 +83,24 @@ namespace CS2MCP
                 return result;
             }
             if (value is IEnumerable sequence) return sequence.Cast<object>().Take(128).Select(x => JsonValue(x, depth + 1)).ToArray();
+            if (type.Namespace?.StartsWith("NodeController.Domain.Common", StringComparison.Ordinal) == true)
+            {
+                // NodeController的轨迹属性会访问尚未生成的数组。状态读取仅访问标量，明确报告省略和不可用字段。
+                var state = new Dictionary<string, object>();
+                var omitted = new List<string>();
+                foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(p3 => p3.CanRead && p3.GetIndexParameters().Length == 0).Take(64))
+                {
+                    var scalar = prop.PropertyType;
+                    if (!(scalar.IsPrimitive || scalar.IsEnum || scalar == typeof(string) || scalar == typeof(decimal) || scalar == typeof(Entity))) { omitted.Add(prop.Name); continue; }
+                    try { state[prop.Name] = JsonValue(prop.GetValue(value), depth + 1); }
+                    catch (TargetInvocationException ex) { state[prop.Name] = new { available = false, error = ex.InnerException?.GetType().Name ?? ex.GetType().Name }; }
+                }
+                return new { type = type.FullName, scalarState = state, omittedGeometryOrCollections = omitted };
+            }
             var fields = new Dictionary<string, object>();
             foreach (var field in type.GetFields(BindingFlags.Public | BindingFlags.Instance).Take(64)) fields[field.Name] = JsonValue(field.GetValue(value), depth + 1);
             if (fields.Count > 0) return fields;
-            if (type.Namespace?.StartsWith("RoadBuilder.Domain.Configurations", StringComparison.Ordinal) == true || type.Namespace?.StartsWith("NodeController.Domain.Common", StringComparison.Ordinal) == true || type.FullName == "Anarchy.Domain.ErrorCheck")
+            if (type.Namespace?.StartsWith("RoadBuilder.Domain.Configurations", StringComparison.Ordinal) == true || type.FullName == "Anarchy.Domain.ErrorCheck")
                 foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(p3 => p3.CanRead && p3.GetIndexParameters().Length == 0))
                     fields[prop.Name] = JsonValue(prop.GetValue(value), depth + 1);
             return fields.Count > 0 ? (object)fields : value.ToString();

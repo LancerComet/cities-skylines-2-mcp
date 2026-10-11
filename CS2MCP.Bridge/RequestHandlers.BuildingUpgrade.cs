@@ -10,6 +10,8 @@ namespace CS2MCP
         /// <summary>仅允许原生建筑扩建清单中的正常解锁项目，不直接写 InstalledUpgrade 或绕过收费。</summary>
         private BridgeResponse UpgradeServiceBuilding(BridgeRequest request)
         {
+            if (request.Query.ContainsKey("dryRun") && !request.TryGetBool("dryRun", out _))
+                return BridgeResponse.Error(400, "dryRun must be true or false; no upgrade was queued");
             if (!TryGetCity(out _, out BridgeResponse error) || !ReadExistingEntity(request, out Entity target, out error)) return error;
             if (!EntityManager.HasComponent<Game.Buildings.Building>(target) || !EntityManager.HasComponent<Transform>(target))
                 return BridgeResponse.Error(400, "target must be a placed service building");

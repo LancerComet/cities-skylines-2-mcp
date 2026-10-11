@@ -25,7 +25,7 @@ test('镜头越界与旧桥接的清除视图请求在写入前拒绝',async t=>
  }
  const old=await client.callTool({name:'cs2_set_camera',arguments:{clearInfoView:true}});
  assert.equal(old.isError,true);assert.equal(writes.length,0);
- version='0.10.1';
+ version='0.10.2';
  const good=await client.callTool({name:'cs2_set_camera',arguments:{clearInfoView:true,zoom:800}});
  assert.notEqual(good.isError,true);assert.equal(writes.length,1);assert.match(writes[0],/clearInfoView=true/);
 });

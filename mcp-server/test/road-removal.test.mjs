@@ -22,7 +22,7 @@ test('batch removal gates versions, preserves complete identities and defaults t
   const roads=[{index:123,version:4},{index:456,version:7}];
   let result=await client.callTool({name:'cs2_remove_road_layout',arguments:{roads}});
   assert.equal(result.isError,true);assert.deepEqual(requests.map(r=>r.url),['/ping']);
-  version='0.10.1';requests.length=0;
+  version='0.10.2';requests.length=0;
   result=await client.callTool({name:'cs2_remove_road_layout',arguments:{roads}});
   assert.notEqual(result.isError,true);assert.equal(requests.at(-1).method,'POST');
   assert.equal(requests.at(-1).url,'/build/road-layout/remove');

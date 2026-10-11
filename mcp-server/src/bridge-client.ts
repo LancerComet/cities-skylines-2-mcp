@@ -11,7 +11,7 @@ export class BridgeError extends Error {
 
 export function isMutation(path: string): boolean {
   const url = new URL(path, "http://127.0.0.1");
-  if (url.searchParams.get("dryRun") === "true" && ["/build/place", "/build/road/connect", "/build/terrain", "/build/building/upgrade",
+  if (url.searchParams.get("dryRun") === "true" && ["/build/place", "/build/road/connect", "/build/terrain", "/build/building/upgrade", "/build/building/rebuild",
     "/build/place/shoreline", "/build/place/roadside", "/build/extractor-area/edit"].includes(url.pathname)) return false;
   return (url.pathname === "/game/milestone-popup" && url.searchParams.get("dismiss") === "true")
     || url.pathname.startsWith("/build/") || url.pathname === "/mods/anarchy/normal-construction"

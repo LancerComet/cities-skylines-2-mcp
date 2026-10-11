@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {dirname,resolve} from 'node:path';
 
 test('建筑预览拒绝旧桥接和错误布尔参数，防止预览请求变成实际施工',async t=>{
-  const writes=[]; let version='0.10.0';
+  const writes=[]; let version='0.10.1';
   const bridge=createServer((req,res)=>{
     res.setHeader('content-type','application/json'); const u=new URL(req.url,'http://127.0.0.1');
     if(u.pathname==='/ping')res.end(JSON.stringify({ok:true,mod:'CS2MCP',version,gameMode:'Game',isLoading:false}));
@@ -20,7 +20,7 @@ test('建筑预览拒绝旧桥接和错误布尔参数，防止预览请求变�
     env:{...process.env,CS2_BRIDGE_URL:`http://127.0.0.1:${bridge.address().port}`,DOTENV_CONFIG_QUIET:'true'},stderr:'pipe'}));
   const args={prefab:'PostOffice01',x:100,z:200,dryRun:true};
   assert.equal((await client.callTool({name:'cs2_place_building',arguments:args})).isError,true); assert.equal(writes.length,0);
-  version='0.10.1';
+  version='0.10.2';
   for(const invalid of ['true',1,null])assert.equal((await client.callTool({name:'cs2_place_building',arguments:{...args,dryRun:invalid}})).isError,true);
   assert.equal(writes.length,0);
   const r=await client.callTool({name:'cs2_place_building',arguments:args}); assert.equal(r.isError,undefined);

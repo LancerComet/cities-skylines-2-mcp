@@ -7,7 +7,7 @@ namespace CS2MCP
     public sealed class Mod : IMod
     {
         public const string Name = "CS2MCP";
-        public const string Version = "0.10.1";
+        public const string Version = "0.10.2";
 
         public static readonly ILog Log = LogManager.GetLogger(Name).SetShowsErrorsInUI(false);
 

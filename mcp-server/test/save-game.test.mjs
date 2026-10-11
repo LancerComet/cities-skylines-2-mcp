@@ -8,7 +8,7 @@ import {dirname,resolve} from 'node:path';
 
 test('background save keeps native save semantics and rejects unsupported or invalid preview options before writing',async t=>{
   const writes=[];
-  let version='0.10.1';
+  let version='0.10.2';
   const bridge=createServer((req,res)=>{
     res.setHeader('content-type','application/json');
     const url=new URL(req.url,'http://127.0.0.1');
@@ -34,7 +34,7 @@ test('background save keeps native save semantics and rejects unsupported or inv
     assert.equal(invalidResult.isError,true);
   }
   assert.equal(writes.length,1);
-  version='0.10.0';
+  version='0.10.1';
   const oldBridgeResult=await client.callTool({name:'cs2_save_game',arguments:{name:'本城授权主档',includePreview:false}});
   assert.equal(oldBridgeResult.isError,true);
   assert.equal(writes.length,1);

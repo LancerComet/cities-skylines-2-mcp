@@ -49,6 +49,7 @@ namespace CS2MCP
             ExtractorAreaEdit,
             NodeUpgrade,
             BuildingUpgrade,
+            BuildingRebuild,
             BuildingMove,
             Zoning,
             Terrain,
@@ -70,6 +71,7 @@ namespace CS2MCP
         private quaternion m_PendingRotation;
         private ControlPoint m_PendingAttachedPoint;
         private BridgeRequest m_PendingRequest;
+        private BridgeResponse m_PendingApplyResponse;
         private ToolBaseSystem m_PreviousTool;
 
         private CityConfigurationSystem m_CityConfigurationSystem;
@@ -79,6 +81,30 @@ namespace CS2MCP
         public override string toolID => "CS2MCP.Bridge";
 
         public bool IsBusy => m_Stage != Stage.Idle;
+
+        /// <summary>界面在首个工具更新前或施工中切换工具时，释放自有请求，保留玩家当前工具。</summary>
+        public void ReconcileToolOwnership()
+        {
+            if (m_Stage == Stage.Idle || m_ToolSystem.activeTool == this) return;
+            var stage = m_Stage;
+            applyMode = ApplyMode.Clear;
+            CompletePending(BridgeResponse.Json(new {
+                error = "native construction interrupted because another tool became active; read the target before continuing",
+                failurePhase = "tool_interrupted",
+                operation = m_PendingKind.ToString(), stage = stage.ToString(),
+                target = new { index = m_PendingTarget.Index, version = m_PendingTarget.Version },
+                mayHaveApplied = stage == Stage.Finish,
+                safeToRetry = false,
+            }, 409));
+            Deactivate();
+        }
+
+        [Preserve]
+        protected override void OnStopRunning()
+        {
+            ReconcileToolOwnership();
+            base.OnStopRunning();
+        }
 
         [Preserve]
         protected override void OnCreate()
@@ -131,6 +157,22 @@ namespace CS2MCP
             m_PendingTarget = target;
             m_PendingPrefabEntity = prefabEntity;
             m_PendingPrefab = prefab;
+            m_PendingPosition = position;
+            m_PendingRotation = rotation;
+            m_PendingRequest = request;
+            Activate();
+            return true;
+        }
+
+        /// <summary>同原生UpgradeTool：空升级预制体、既有目标和原位控制点生成正常重建预览。</summary>
+        public bool TryQueueBuildingRebuild(Entity target, string label, float3 position, quaternion rotation, BridgeRequest request)
+        {
+            if (m_Stage != Stage.Idle) return false;
+            m_PendingKind = OperationKind.BuildingRebuild;
+            m_PendingTarget = target;
+            m_PendingPrefabEntity = Entity.Null;
+            m_PendingPrefab = null;
+            m_PendingLabel = label;
             m_PendingPosition = position;
             m_PendingRotation = rotation;
             m_PendingRequest = request;
@@ -388,6 +430,7 @@ namespace CS2MCP
                                 else CreatePlacementDefinitions();
                                 break;
                             case OperationKind.BuildingUpgrade:
+                            case OperationKind.BuildingRebuild:
                                 inputDeps = CreateBuildingUpgradeDefinitions(inputDeps);
                                 break;
                             case OperationKind.BuildingMove:
@@ -438,7 +481,7 @@ namespace CS2MCP
                             break;
                         }
                         // Object预览必须在原生Validation之后清除，不能因SDK传了dryRun仍实际放置和收费。
-                        if ((m_PendingKind == OperationKind.Object || m_PendingKind == OperationKind.RoadLayout || m_PendingKind == OperationKind.RoadLayoutRemoval) && m_PendingRequest != null
+                        if ((m_PendingKind == OperationKind.Object || m_PendingKind == OperationKind.RoadLayout || m_PendingKind == OperationKind.RoadLayoutRemoval || m_PendingKind == OperationKind.BuildingRebuild) && m_PendingRequest != null
                             && m_PendingRequest.TryGetBool("dryRun", out bool objectDryRun) && objectDryRun)
                         {
                             bool allowed = GetAllowApply();
@@ -452,7 +495,8 @@ namespace CS2MCP
                         else if (GetAllowApply())
                         {
                             applyMode = ApplyMode.Apply;
-                            if (m_PendingKind != OperationKind.ExtractorAreaEdit && m_PendingKind != OperationKind.BuildingMove) CompletePending(BuildSuccessResponse());
+                            if (m_PendingKind != OperationKind.ExtractorAreaEdit && m_PendingKind != OperationKind.BuildingMove)
+                                m_PendingApplyResponse = BuildSuccessResponse();
                         }
                         else
                         {
@@ -475,6 +519,18 @@ namespace CS2MCP
                         }
                         if (m_PendingKind == OperationKind.Zoning) CompleteZoning();
                         if (m_PendingKind == OperationKind.ExtractorAreaEdit) CompleteExtractorAreaEdit();
+                        if (m_PendingKind == OperationKind.Upgrade && m_PendingApplyResponse != null && m_PendingRequest != null)
+                        {
+                            CompositionFlags actual = EntityManager.Exists(m_PendingTarget) && EntityManager.HasComponent<Upgraded>(m_PendingTarget)
+                                ? EntityManager.GetComponentData<Upgraded>(m_PendingTarget).m_Flags : default;
+                            // 原生工具可能接受预览后过滤不适用标志；没有实际回读便不能宣称升级完成。
+                            if (!EntityManager.Exists(m_PendingTarget) || actual != m_PendingUpgradeFlags)
+                                m_PendingApplyResponse = BridgeResponse.Json(new { error = "原生升级已提交，但实际标志与请求不一致；先刷新现场，不重放。",
+                                    failurePhase = "native_readback", mayHaveApplied = true, safeToRetry = false,
+                                    entity = new { index = m_PendingTarget.Index, version = m_PendingTarget.Version },
+                                    requestedFlags = new { general = m_PendingUpgradeFlags.m_General.ToString(), left = m_PendingUpgradeFlags.m_Left.ToString(), right = m_PendingUpgradeFlags.m_Right.ToString() },
+                                    actualFlags = new { general = actual.m_General.ToString(), left = actual.m_Left.ToString(), right = actual.m_Right.ToString() } }, 409);
+                        }
                         if (m_PendingKind == OperationKind.BuildingMove && m_PendingRequest != null)
                         {
                             if (EntityManager.Exists(m_PendingTarget) && EntityManager.HasComponent<Transform>(m_PendingTarget)
@@ -484,6 +540,8 @@ namespace CS2MCP
                                     note = "native Relocate applied and original position verified; inspect renters, installed upgrades, utilities and access after simulation" }));
                             else CompletePending(BridgeResponse.Error(500, "native move application returned but original position not verified; refresh building list before any retry"));
                         }
+                        // 等原生ToolApply阶段结束再答复，避免成功回执与下一次界面切换之间留下悬挂操作。
+                        if (m_PendingApplyResponse != null) CompletePending(m_PendingApplyResponse);
                         applyMode = ApplyMode.None;
                         Deactivate();
                         break;
@@ -517,6 +575,9 @@ namespace CS2MCP
                         note = "原生道路布局应用；须回读实际曲线、车道、节点和收费，不代表已通车或运营验收。" });
                 case OperationKind.BuildingUpgrade:
                     return BridgeResponse.Json(new { upgraded = true, building = new { index = m_PendingTarget.Index, version = m_PendingTarget.Version }, prefab = m_PendingPrefab.name, note = "native tool application accepted; verify InstalledUpgrade and actual facility capacity after simulation ticks" });
+                case OperationKind.BuildingRebuild:
+                    return BridgeResponse.Json(new { applied = true, building = new { index = m_PendingTarget.Index, version = m_PendingTarget.Version }, prefab = m_PendingLabel,
+                        nativePreviewCost = NativePreviewCost(), note = "原生重建预览通过并提交；必须回读损毁状态、附属、端口和收费，不据此重复请求" });
                 case OperationKind.Demolish:
                     return BridgeResponse.Json(new
                     {
@@ -585,6 +646,7 @@ namespace CS2MCP
             m_Stage = Stage.Idle;
             m_PendingRequest = null;
             m_PendingPrefab = null;
+            m_PendingApplyResponse = null;
             m_PendingPrefabEntity = Entity.Null;
             m_RoadLayout = null;
             m_RoadRemovalTargets = null;

@@ -17,11 +17,47 @@ namespace CS2MCP
         private static string FrameLimitPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "Low", "Colossal Order", "Cities Skylines II", "Mods", "CS2MCP", "frame-limit.txt");
         private bool m_FrameLimitRestored;
         private bool m_RuntimeSettingsLoadComplete;
+        private double m_LastResourceTime;
+        private int m_LastResourceFrame;
 
         public void ResetRuntimeSettingsAfterLoad()
         {
             m_FrameLimitRestored = false;
             m_RuntimeSettingsLoadComplete = true;
+            m_LastResourceTime = 0;
+            m_LastResourceFrame = 0;
+        }
+
+        /// <summary>按请求只读原生资源计数；不启用Profiler、不收集堆、不强制GC或卸载资源。</summary>
+        private BridgeResponse GetResourceDiagnostics()
+        {
+            using var process = System.Diagnostics.Process.GetCurrentProcess();
+            double now = Time.realtimeSinceStartupAsDouble;
+            int frame = Time.frameCount;
+            double elapsed = now - m_LastResourceTime;
+            double? renderFrameRate = m_LastResourceTime > 0 && elapsed > 0 && frame >= m_LastResourceFrame
+                ? (double?)(frame - m_LastResourceFrame) / elapsed : null;
+            m_LastResourceTime = now;
+            m_LastResourceFrame = frame;
+            int temporary, deleted;
+            using (var query = EntityManager.CreateEntityQuery(ComponentType.ReadOnly<Game.Tools.Temp>()))
+                temporary = query.CalculateEntityCount();
+            using (var query = EntityManager.CreateEntityQuery(ComponentType.ReadOnly<Deleted>()))
+                deleted = query.CalculateEntityCount();
+            return BridgeResponse.Json(new {
+                capturedAtUtc = DateTime.UtcNow.ToString("o"), processId = process.Id,
+                memory = RuntimeMemory.Read(),
+                unityAllocatedBytes = UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong(),
+                unityReservedBytes = UnityEngine.Profiling.Profiler.GetTotalReservedMemoryLong(),
+                unityUnusedReservedBytes = UnityEngine.Profiling.Profiler.GetTotalUnusedReservedMemoryLong(),
+                graphicsDriverAllocatedBytes = UnityEngine.Profiling.Profiler.GetAllocatedMemoryForGraphicsDriver(),
+                monoHeapBytes = UnityEngine.Profiling.Profiler.GetMonoHeapSizeLong(),
+                monoUsedBytes = UnityEngine.Profiling.Profiler.GetMonoUsedSizeLong(),
+                temporaryEntities = temporary, deletedEntities = deleted, renderFrame = frame,
+                renderFrameRateSincePreviousRead = renderFrameRate, sampleSeconds = renderFrameRate.HasValue ? (double?)elapsed : null,
+                applicationFocused = Application.isFocused, graphics = new { targetFrameRate = Application.targetFrameRate, vSyncCount = QualitySettings.vSyncCount },
+                note = "只读主线程计数；Unity/驱动统计不等于进程提交量，0可能表示平台未提供；帧率是两次读取间基础Unity帧数，不包含驱动插帧；不是根因或泄漏修复证明"
+            });
         }
 
         /// <summary>只恢复本桥接接口明确保存的基础帧率上限，不改变画质或显卡驱动设置。</summary>
@@ -34,7 +70,7 @@ namespace CS2MCP
                 || manager == null || manager.isGameLoading || manager.gameMode != Game.GameMode.Game) return;
             m_FrameLimitRestored = true;
             try {
-                if (File.Exists(FrameLimitPath) && int.TryParse(File.ReadAllText(FrameLimitPath), out int limit) && limit >= 30 && limit <= 240)
+                if (File.Exists(FrameLimitPath) && int.TryParse(File.ReadAllText(FrameLimitPath), out int limit) && limit >= 10 && limit <= 240)
                 {
                     SharedSettings.instance.graphics.vSync = false;
                     SharedSettings.instance.graphics.ApplyAndSave();
@@ -69,8 +105,9 @@ namespace CS2MCP
             }
             int? requestedLimit = null;
             if (request.Query.TryGetValue("maxFps", out string raw)) {
-                if (!int.TryParse(raw, out int limit) || limit < 30 || limit > 240)
-                    return BridgeResponse.Error(400, "maxFps must be an integer from 30 to 240");
+                // Unity 的基础渲染限帧独立于模拟倍速；后台允许低于30帧，仍禁止0及无限帧率值。
+                if (!int.TryParse(raw, out int limit) || limit < 10 || limit > 240)
+                    return BridgeResponse.Error(400, "maxFps must be an integer from 10 to 240");
                 requestedLimit = limit;
             }
             if (requestedLimit.HasValue && (requestedVSync ?? SharedSettings.instance.graphics.vSync))
@@ -91,13 +128,9 @@ namespace CS2MCP
         private T CombinedFacilityData<T>(Entity building, Entity prefab) where T : unmanaged, IComponentData, ICombineData<T>
         {
             T data = EntityManager.GetComponentData<T>(prefab);
+            // 同原生设施AI，按InstalledUpgrade的Inactive选项合并；不用理论挂载总数冒充生效容量。
             if (EntityManager.HasBuffer<Game.Buildings.InstalledUpgrade>(building))
-                foreach (var installed in EntityManager.GetBuffer<Game.Buildings.InstalledUpgrade>(building, true)) {
-                    Entity upgrade = installed.m_Upgrade;
-                    if (!EntityManager.Exists(upgrade) || !EntityManager.HasComponent<PrefabRef>(upgrade)) continue;
-                    Entity upgradePrefab = EntityManager.GetComponentData<PrefabRef>(upgrade).m_Prefab;
-                    if (EntityManager.HasComponent<T>(upgradePrefab)) data.Combine(EntityManager.GetComponentData<T>(upgradePrefab));
-                }
+                UpgradeUtils.CombineStats(EntityManager, ref data, EntityManager.GetBuffer<Game.Buildings.InstalledUpgrade>(building, true));
             return data;
         }
 

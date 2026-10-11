@@ -83,6 +83,8 @@ namespace CS2MCP
         [Preserve]
         protected override void OnUpdate()
         {
+            // 工具还未开始运行就被UI替换时，不会收到OnStopRunning；UI阶段也核一次所有权。
+            World.GetExistingSystemManaged<BridgeToolSystem>()?.ReconcileToolOwnership();
             m_Handlers.RestoreFrameLimit();
             m_Handlers.ReconcileBackgroundSimulation();
             if (!SimulationHasTickedSinceLoad && m_SimulationSystem.frameIndex != m_FrameIndexAtLoad)

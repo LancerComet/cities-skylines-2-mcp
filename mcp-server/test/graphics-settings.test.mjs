@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {dirname,resolve} from 'node:path';
 
 test('图形设置拒绝旧桥接及非法范围，保留原生布尔值和帧率',async t=>{
-  let version='0.10.0'; const requests=[];
+  let version='0.10.1'; const requests=[];
   const mock=createServer((req,res)=>{
     res.setHeader('content-type','application/json');
     if(req.url==='/ping')res.end(JSON.stringify({version}));
@@ -23,8 +23,8 @@ test('图形设置拒绝旧桥接及非法范围，保留原生布尔值和帧�
   const args={maxFps:30,vSync:false};
   assert.equal((await client.callTool({name:'cs2_set_graphics_settings',arguments:args})).isError,true);
   assert.equal(requests.length,0);
-  version='0.10.1';
-  for(const invalid of [{maxFps:20},{maxFps:241},{maxFps:30.5},{vSync:'false'}])
+  version='0.10.2';
+  for(const invalid of [{maxFps:9},{maxFps:241},{maxFps:30.5},{vSync:'false'}])
     assert.equal((await client.callTool({name:'cs2_set_graphics_settings',arguments:invalid})).isError,true);
   assert.equal(requests.length,0);
   assert.notEqual((await client.callTool({name:'cs2_set_graphics_settings',arguments:args})).isError,true);
@@ -33,4 +33,8 @@ test('图形设置拒绝旧桥接及非法范围，保留原生布尔值和帧�
   assert.equal(url.searchParams.get('maxFps'),'30');
   assert.equal(url.searchParams.get('vSync'),'false');
   assert.equal(requests[0].method,'POST');
+  for(const maxFps of [10,240]) {
+    assert.notEqual((await client.callTool({name:'cs2_set_graphics_settings',arguments:{maxFps,vSync:false}})).isError,true);
+    assert.equal(new URL(requests.at(-1).url,'http://127.0.0.1').searchParams.get('maxFps'),String(maxFps));
+  }
 });

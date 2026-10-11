@@ -478,9 +478,9 @@ namespace CS2MCP
             if (side != "left" && side != "right" && side != "both") return BridgeResponse.Error(400, "side must be left|right|both");
             Game.Prefabs.CompositionFlags flags = default;
             if (EntityManager.HasComponent<Game.Net.Upgraded>(entity)) {
-                var oldFlags = EntityManager.GetComponentData<Game.Net.Upgraded>(entity).m_Flags;
-                flags.m_Left = oldFlags.m_Left & kTurnRestrictionFlags;
-                flags.m_Right = oldFlags.m_Right & kTurnRestrictionFlags;
+                // 美化接口是增添操作；必须保留公交/自行车专道、过街、桥隧结构和另一侧既有服务。
+                // 清除某项服务使用对应原生服务工具，不以添加树木隐式重置整个横断面。
+                flags = EntityManager.GetComponentData<Game.Net.Upgraded>(entity).m_Flags;
             }
             foreach (string name in upgradesRaw.Split(','))
             {

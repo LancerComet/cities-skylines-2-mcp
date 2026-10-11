@@ -557,10 +557,36 @@ namespace CS2MCP
                 int pathElementCount = EntityManager.HasBuffer<Game.Pathfind.PathElement>(segment)
                     ? EntityManager.GetBuffer<Game.Pathfind.PathElement>(segment, true).Length : 0;
                 rows.Add(new { entity = Ref(segment), information, pathElementCount,
+                    roadPath = DescribeTransitRoadPath(segment),
                     targets = EntityManager.HasComponent<Game.Routes.PathTargets>(segment)
                         ? OptionalModApi.JsonValue(EntityManager.GetComponentData<Game.Routes.PathTargets>(segment)) : null });
             }
             return new { segments = rows, complete = true };
+        }
+
+        /// <summary>按实际线路寻路元素追溯独立路段，供连续公交专道验收；不把两站直线当实际路线。</summary>
+        private object DescribeTransitRoadPath(Entity segment)
+        {
+            var roads = new List<object>();
+            var seen = new HashSet<Entity>();
+            if (!EntityManager.HasBuffer<Game.Pathfind.PathElement>(segment)) return new { roads, complete = true };
+            var path = EntityManager.GetBuffer<Game.Pathfind.PathElement>(segment, true);
+            int limit = Math.Min(path.Length, 4096);
+            for (int i = 0; i < limit; i++) {
+                Entity current = path[i].m_Target;
+                for (int depth = 0; depth < 12 && current != Entity.Null && EntityManager.Exists(current); depth++) {
+                    if (EntityManager.HasComponent<Game.Net.Edge>(current)) {
+                        if (EntityManager.HasComponent<Game.Net.Road>(current) && seen.Add(current))
+                            roads.Add(new { entity = Ref(current), prefab = PrefabNameOf(current),
+                                partOfBuilding = EntityManager.HasComponent<Game.Common.Owner>(current) });
+                        break;
+                    }
+                    if (!EntityManager.HasComponent<Game.Common.Owner>(current)) break;
+                    current = EntityManager.GetComponentData<Game.Common.Owner>(current).m_Owner;
+                }
+            }
+            return new { roads, complete = path.Length <= limit, examinedPathElements = limit,
+                note = "只列实际寻路中可追溯到的Road边；节点连接、步行和资产内部段不能据此称已完成全部车道检查" };
         }
 
         private BridgeResponse CreateTransitLine(BridgeRequest request)

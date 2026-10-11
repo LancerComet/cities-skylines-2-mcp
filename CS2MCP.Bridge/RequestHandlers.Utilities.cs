@@ -1,12 +1,114 @@
 using System.Collections.Generic;
 using Game.Prefabs;
 using Game.Simulation;
+using Unity.Collections;
 using Unity.Entities;
 
 namespace CS2MCP
 {
     public sealed partial class RequestHandlers
     {
+        private BridgeResponse GetOutsideConnections()
+        {
+            var rows = new List<object>();
+            using (var query = EntityManager.CreateEntityQuery(new EntityQueryDesc {
+                All = new[] { ComponentType.ReadOnly<Game.Objects.OutsideConnection>(), ComponentType.ReadOnly<PrefabRef>() },
+                None = new[] { ComponentType.ReadOnly<Game.Common.Deleted>(), ComponentType.ReadOnly<Game.Tools.Temp>() }
+            }))
+            using (var entities = query.ToEntityArray(Allocator.Temp)) {
+                if (entities.Length > 512) return BridgeResponse.Error(503, "outside connection count exceeds the complete inspection limit 512");
+                foreach (var entity in entities) {
+                    var prefab = EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab;
+                    Entity owner = EntityManager.HasComponent<Game.Common.Owner>(entity)
+                        ? EntityManager.GetComponentData<Game.Common.Owner>(entity).m_Owner : Entity.Null;
+                    string transportTypes = EntityManager.HasComponent<OutsideConnectionData>(prefab)
+                        ? EntityManager.GetComponentData<OutsideConnectionData>(prefab).m_Type.ToString() : null;
+                    object position = null;
+                    if (owner != Entity.Null && EntityManager.HasComponent<Game.Net.Node>(owner)) {
+                        var p = EntityManager.GetComponentData<Game.Net.Node>(owner).m_Position;
+                        position = new { x = p.x, y = p.y, z = p.z };
+                    } else if (EntityManager.HasComponent<Game.Objects.Transform>(entity)) {
+                        var p = EntityManager.GetComponentData<Game.Objects.Transform>(entity).m_Position;
+                        position = new { x = p.x, y = p.y, z = p.z };
+                    }
+                    var edges = new List<object>();
+                    int count = 0;
+                    if (owner != Entity.Null && EntityManager.HasBuffer<Game.Net.ConnectedEdge>(owner)) {
+                        var b = EntityManager.GetBuffer<Game.Net.ConnectedEdge>(owner, true); count = b.Length;
+                        if (count > 32) return BridgeResponse.Error(503, "outside port connected edge count exceeds complete limit 32");
+                        foreach (var edge in b) edges.Add(new { entity = Ref(edge.m_Edge), prefab = PrefabNameOf(edge.m_Edge) });
+                    }
+                    rows.Add(new { entity = Ref(entity), prefab = PrefabNameOf(entity),
+                        name = World.GetOrCreateSystemManaged<Game.UI.NameSystem>().GetRenderedLabelName(entity), transportTypes,
+                        electricity = EntityManager.HasComponent<Game.Objects.ElectricityOutsideConnection>(entity),
+                        waterAndSewage = EntityManager.HasComponent<Game.Objects.WaterPipeOutsideConnection>(entity),
+                        owner = owner == Entity.Null ? null : Ref(owner), position, connectedEdges = edges, connectedEdgeCount = count });
+                }
+            }
+            return BridgeResponse.Json(new { connections = rows, complete = true,
+                note = "native physical outside markers and owner network nodes; existence does not prove an operating passenger/cargo line or completed utility path" });
+        }
+
+        // 与原生信息面板同源；外部连接是节点的子物体，不能只查路网节点上的 OutsideConnection。
+        private BridgeResponse GetUtilityOverview()
+        {
+            var power = World.GetOrCreateSystemManaged<ElectricityStatisticsSystem>();
+            var powerTrade = World.GetOrCreateSystemManaged<ElectricityTradeSystem>();
+            var water = World.GetOrCreateSystemManaged<WaterStatisticsSystem>();
+            var waterTrade = World.GetOrCreateSystemManaged<WaterTradeSystem>();
+            var ports = new List<object>();
+            using (var query = EntityManager.CreateEntityQuery(new EntityQueryDesc {
+                Any = new[] { ComponentType.ReadOnly<Game.Objects.ElectricityOutsideConnection>(),
+                    ComponentType.ReadOnly<Game.Objects.WaterPipeOutsideConnection>() },
+                None = new[] { ComponentType.ReadOnly<Game.Common.Deleted>(), ComponentType.ReadOnly<Game.Tools.Temp>() }
+            }))
+            using (var entities = query.ToEntityArray(Allocator.Temp)) {
+                if (entities.Length > 256) return BridgeResponse.Error(503, "utility outside port count exceeds the complete inspection limit 256");
+                foreach (var entity in entities) {
+                    Entity owner = EntityManager.HasComponent<Game.Common.Owner>(entity)
+                        ? EntityManager.GetComponentData<Game.Common.Owner>(entity).m_Owner : Entity.Null;
+                    object position = null;
+                    if (owner != Entity.Null && EntityManager.HasComponent<Game.Net.Node>(owner)) {
+                        var p = EntityManager.GetComponentData<Game.Net.Node>(owner).m_Position;
+                        position = new { x = p.x, y = p.y, z = p.z };
+                    } else if (EntityManager.HasComponent<Game.Objects.Transform>(entity)) {
+                        var p = EntityManager.GetComponentData<Game.Objects.Transform>(entity).m_Position;
+                        position = new { x = p.x, y = p.y, z = p.z };
+                    }
+                    ports.Add(new { entity = Ref(entity), prefab = PrefabNameOf(entity),
+                        electricity = EntityManager.HasComponent<Game.Objects.ElectricityOutsideConnection>(entity),
+                        waterAndSewage = EntityManager.HasComponent<Game.Objects.WaterPipeOutsideConnection>(entity),
+                        owner = owner == Entity.Null ? null : Ref(owner), position,
+                        utilities = owner != Entity.Null && EntityManager.Exists(owner) ? DescribeUtilityState(owner) : null });
+                }
+            }
+            object prices = null;
+            using (var query = EntityManager.CreateEntityQuery(ComponentType.ReadOnly<OutsideTradeParameterData>())) {
+                if (query.CalculateEntityCount() == 1) {
+                    var p = query.GetSingleton<OutsideTradeParameterData>();
+                    prices = new { electricityImport = p.m_ElectricityImportPrice, electricityExport = p.m_ElectricityExportPrice,
+                        freshWaterImport = p.m_WaterImportPrice, freshWaterExport = p.m_WaterExportPrice,
+                        freshWaterPollutionTolerance = p.m_WaterExportPollutionTolerance,
+                        sewageExportCost = p.m_SewageExportPrice,
+                        note = "native trade prices; sewage export is a paid disposal service, not sales revenue" };
+                }
+            }
+            return BridgeResponse.Json(new {
+                electricity = new { production = power.production, consumption = power.consumption,
+                    fulfilled = power.fulfilledConsumption, export = powerTrade.export, import = powerTrade.import,
+                    batteryCharge = power.batteryCharge, batteryCapacity = power.batteryCapacity },
+                freshWater = new { capacity = water.freshCapacity, consumption = water.freshConsumption,
+                    fulfilled = water.fulfilledFreshConsumption, export = waterTrade.freshExport, import = waterTrade.freshImport },
+                sewage = new { capacity = water.sewageCapacity, consumption = water.sewageConsumption,
+                    fulfilled = water.fulfilledSewageConsumption, exportedForPaidDisposal = waterTrade.sewageExport },
+                prices, ports, portsComplete = true,
+                units = new { electricityRawPerMW = 10000, water = "native volumePerMonth, cubic meters per game month",
+                    rawGraphCapacitySentinel = 1073741823,
+                    note = "original fields retain native values; 1073741823 is the native effectively-unbounded flow capacity sentinel, not a promised operating throughput" },
+                note = "read-only; sum of connections is not proven network throughput. Inspect shared edges, transformers, actual flows and fulfilled demand. Water currently has no sewage-import sales mechanism."
+            });
+        }
+
         // 网络图与建筑端口一起读取；零流量不等于无作用，备用线路仍需拓扑判断。
         private object DescribeUtilityPrefab(Entity prefab)
         {

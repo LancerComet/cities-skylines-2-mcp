@@ -107,6 +107,10 @@ namespace CS2MCP
                     return GetFacilityStatus();
                 case "/city/indicators":
                     return GetCityIndicators();
+                case "/city/utilities":
+                    return GetUtilityOverview();
+                case "/city/outside-connections":
+                    return GetOutsideConnections();
                 case "/city/building/details":
                     return GetBuildingDetails(request);
                 case "/city/facility-parking":
@@ -121,6 +125,8 @@ namespace CS2MCP
                     return EditExtractorArea(request);
                 case "/build/building/upgrade":
                     return UpgradeServiceBuilding(request);
+                case "/build/building/rebuild":
+                    return RebuildServiceBuilding(request);
                 case "/city/happiness":
                     return GetHappinessFactors();
                 case "/entity/name/set":
@@ -131,6 +137,8 @@ namespace CS2MCP
                     return GetZoneCells(request);
                 case "/settings/graphics":
                     return GetGraphicsSettings();
+                case "/diagnostics/resources":
+                    return GetResourceDiagnostics();
                 case "/settings/graphics/set":
                     return SetGraphicsSettings(request);
                 case "/city/overview":

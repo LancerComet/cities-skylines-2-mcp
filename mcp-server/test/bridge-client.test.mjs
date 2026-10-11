@@ -81,6 +81,13 @@ test('native validation failure never invites automatic retry',async t=>{
   const base=await mock(t,(_,res)=>{res.writeHead(409);res.end('{"error":"OverlapExisting"}');});
   await assert.rejects(bridgeJson('/build/road',1000,base),error=>!error.safeToRetry && !error.mayHaveApplied);
 });
+
+test('native interrupted apply can be unknown on HTTP 409 and must never auto replay',async t=>{
+  let calls=0;
+  const base=await mock(t,(_,res)=>{calls++;res.writeHead(409);res.end(JSON.stringify({error:'native construction interrupted',mayHaveApplied:true,safeToRetry:false}));});
+  await assert.rejects(bridgeJson('/build/upgrade',1000,base),error=>error.mayHaveApplied && !error.safeToRetry && error.status===409);
+  assert.equal(calls,1);
+});
 test('native preview error locations survive MCP without changing retry semantics',async t=>{
   const details=[{error:'OverlapExisting',location:{x:12,y:34,z:56}}];
   const base=await mock(t,(_,res)=>{res.writeHead(409);res.end(JSON.stringify({error:'blocked',validationErrors:details}));});

@@ -49,7 +49,7 @@ namespace CS2MCP
             var flags = data.m_SetUpgradeFlags | data.m_UnsetUpgradeFlags;
             return (data.m_PlacementFlags & Game.Net.PlacementFlags.IsUpgrade) != 0
                 && (data.m_PlacementFlags & Game.Net.PlacementFlags.NodeUpgrade) == 0
-                && ((flags.m_Left | flags.m_Right) & kTurnRestrictionFlags) == 0
+                && ((flags.m_Left | flags.m_Right) & (kTurnRestrictionFlags | CompositionFlags.Side.AddCrosswalk | CompositionFlags.Side.RemoveCrosswalk)) == 0
                 && flags != default;
         }
 
@@ -90,7 +90,7 @@ namespace CS2MCP
                 || EntityManager.HasComponent<Owner>(road) || EntityManager.HasComponent<Deleted>(road)) return BridgeResponse.Error(400, "requires an existing standalone road");
             if (!TryFindPrefabByName(RoadUpgradePrefabQuery, name, out Entity prefabEntity, out PrefabBase prefab)) return BridgeResponse.Error(404, "unknown native upgrade prefab");
             if (!(allServices ? IsNativeRoadServiceUpgrade(prefabEntity, prefab) : IsNativeLaneUpgrade(prefabEntity, prefab)))
-                return BridgeResponse.Error(400, "unsupported native edge upgrade; use junction/turn tools for node controls, no invisible or sub-replacement assets");
+                return BridgeResponse.Error(400, "unsupported native edge upgrade; crosswalk requires an explicit junction approach via nodeController.crosswalk, turn/node controls use their own tools; no invisible or sub-replacement assets");
             if (IsLocked(prefabEntity)) return BridgeResponse.Error(409, "native upgrade is locked");
             if (EntityManager.HasBuffer<Game.Net.SubReplacement>(prefabEntity)) return BridgeResponse.Error(400, "sub-replacement upgrades require their native object tool, unsupported here");
             PlaceableNetData data = EntityManager.GetComponentData<PlaceableNetData>(prefabEntity);

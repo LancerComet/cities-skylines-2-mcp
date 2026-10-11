@@ -26,7 +26,7 @@ test('全部运输统计区分非线路服务与零线路；渡轮不混入客�
  const stops=[{index:1,version:1},{index:2,version:1}];
  assert.equal((await client.callTool({name:'cs2_create_transit_line',arguments:{type:'ferry',stops}})).isError,true);
  assert.equal(requests.length,0);
- version='0.10.1';
+ version='0.10.2';
  const overview=await client.callTool({name:'cs2_transport_overview',arguments:{}});
  assert.notEqual(overview.isError,true);
  const result=JSON.parse(overview.content[0].text);

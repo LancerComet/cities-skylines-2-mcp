@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {dirname,resolve} from 'node:path';
 
 test('后台模拟拒绝旧桥接和非原生倍速，保留显式启停与暂停参数',async t=>{
-  let version='0.10.0'; const writes=[]; const popups=[];
+  let version='0.10.1'; const writes=[]; const popups=[];
   const mock=createServer((req,res)=>{
     res.setHeader('content-type','application/json');
     const url=new URL(req.url,'http://127.0.0.1');
@@ -27,7 +27,7 @@ test('后台模拟拒绝旧桥接和非原生倍速，保留显式启停与暂�
     env:{...process.env,CS2_BRIDGE_URL:`http://127.0.0.1:${mock.address().port}`,DOTENV_CONFIG_QUIET:'true'},stderr:'pipe'}));
   let result=await client.callTool({name:'cs2_set_simulation',arguments:{backgroundSimulation:true,speed:4}});
   assert.equal(result.isError,true);assert.equal(writes.length,0);
-  version='0.10.1';
+  version='0.10.2';
   for(const arguments_ of [{backgroundSimulation:true,speed:8},{backgroundSimulation:'true',speed:4}]){
     result=await client.callTool({name:'cs2_set_simulation',arguments:arguments_});
     assert.equal(result.isError,true);assert.equal(writes.length,0);
@@ -39,10 +39,10 @@ test('后台模拟拒绝旧桥接和非原生倍速，保留显式启停与暂�
   assert.notEqual(result.isError,true);assert.deepEqual(writes.at(-1),{paused:'true'});
   result=await client.callTool({name:'cs2_set_simulation',arguments:{backgroundSimulation:false}});
   assert.notEqual(result.isError,true);assert.deepEqual(writes.at(-1),{backgroundSimulation:'false'});
-  version='0.10.0';
+  version='0.10.1';
   result=await client.callTool({name:'cs2_milestone_popup',arguments:{dismiss:true}});
   assert.equal(result.isError,true);assert.equal(popups.length,0);
-  version='0.10.1';
+  version='0.10.2';
   result=await client.callTool({name:'cs2_milestone_popup',arguments:{dismiss:'true'}});
   assert.equal(result.isError,true);assert.equal(popups.length,0);
   result=await client.callTool({name:'cs2_milestone_popup',arguments:{}});
