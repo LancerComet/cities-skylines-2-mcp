@@ -46,11 +46,11 @@ namespace CS2MCP
             Demolish,
             Upgrade,
             Area,
-            ExtractorAreaEdit,
             NodeUpgrade,
             BuildingUpgrade,
             BuildingRebuild,
             BuildingMove,
+            TransitStopMove,
             Zoning,
             Terrain,
         }
@@ -132,10 +132,17 @@ namespace CS2MCP
         }
 
         /// <summary>Must be called on the simulation thread.</summary>
-        public bool TryQueuePlacement(Entity prefabEntity, PrefabBase prefab, float3 position, quaternion rotation, BridgeRequest request, ControlPoint attachedPoint = default)
+        public bool TryQueuePlacement(Entity prefabEntity, PrefabBase prefab, float3 position, quaternion rotation, BridgeRequest request, out BridgeResponse error, ControlPoint attachedPoint = default)
         {
+            error = null;
             if (m_Stage != Stage.Idle)
             {
+                error = BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+                return false;
+            }
+            if (EntityManager.HasComponent<PlaceholderBuildingData>(prefabEntity))
+            {
+                error = BridgeResponse.Error(400, "specialized industry placeholders require their dedicated native construction workflow");
                 return false;
             }
             m_PendingKind = OperationKind.Object;
@@ -322,7 +329,9 @@ namespace CS2MCP
                     }
                     rows.Add(new { error = EntityManager.GetComponentData<ToolErrorData>(prefab).m_Error.ToString(),
                         temporaryOwner = new { index = owner.Index, version = owner.Version },
-                        ownerGeometry = DescribePreviewOwner(owner), location });
+                        ownerGeometry = DescribePreviewOwner(owner),
+                        collisionTarget = EntityManager.HasComponent<Target>(icon)
+                            ? DescribePreviewOwner(EntityManager.GetComponentData<Target>(icon).m_Target) : null, location });
                     if (rows.Count >= 64) break;
                 }
             return rows;
@@ -331,6 +340,8 @@ namespace CS2MCP
         // 回读原生校验前生成的几何，不用输入曲线冒充 CourseSplit 后的道路。
         private object DescribePreviewOwner(Entity entity)
         {
+            if (entity == Entity.Null || !EntityManager.Exists(entity))
+                return new { entity = new { index = entity.Index, version = entity.Version }, exists = false };
             string prefab = null;
             if (EntityManager.HasComponent<PrefabRef>(entity))
             {
@@ -361,8 +372,21 @@ namespace CS2MCP
                 var e = EntityManager.GetComponentData<Game.Net.Elevation>(entity).m_Elevation;
                 elevation = new { start = e.x, end = e.y };
             }
-            var temp = EntityManager.GetComponentData<Temp>(entity);
-            return new { prefab, kind, curve, position, elevation, flags = temp.m_Flags.ToString(),
+            var temp = EntityManager.HasComponent<Temp>(entity) ? EntityManager.GetComponentData<Temp>(entity) : default;
+            object attached = null;
+            if (EntityManager.HasComponent<Game.Objects.Attached>(entity)) {
+                var a = EntityManager.GetComponentData<Game.Objects.Attached>(entity);
+                attached = new { parent = new { index = a.m_Parent.Index, version = a.m_Parent.Version }, curvePosition = a.m_CurvePosition };
+            }
+            object rotation = EntityManager.HasComponent<Transform>(entity)
+                ? (object)EntityManager.GetComponentData<Transform>(entity).m_Rotation.value : null;
+            object size = null;
+            if (EntityManager.HasComponent<PrefabRef>(entity)) {
+                var p = EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab;
+                if (EntityManager.HasComponent<ObjectGeometryData>(p)) size = EntityManager.GetComponentData<ObjectGeometryData>(p).m_Size;
+            }
+            return new { entity = new { index = entity.Index, version = entity.Version }, prefab, kind, curve, position, rotation, size, attached,
+                elevation, flags = EntityManager.HasComponent<Temp>(entity) ? temp.m_Flags.ToString() : null,
                 original = new { index = temp.m_Original.Index, version = temp.m_Original.Version } };
         }
 
@@ -434,6 +458,7 @@ namespace CS2MCP
                                 inputDeps = CreateBuildingUpgradeDefinitions(inputDeps);
                                 break;
                             case OperationKind.BuildingMove:
+                            case OperationKind.TransitStopMove:
                                 inputDeps = CreateBuildingMoveDefinitions(inputDeps);
                                 break;
                             case OperationKind.Net:
@@ -447,9 +472,6 @@ namespace CS2MCP
                                 break;
                             case OperationKind.Area:
                                 CreateAreaDefinitions();
-                                break;
-                            case OperationKind.ExtractorAreaEdit:
-                                CreateExtractorAreaEditDefinition();
                                 break;
                             case OperationKind.NodeUpgrade:
                                 CreateNodeUpgradeDefinition();
@@ -465,6 +487,11 @@ namespace CS2MCP
                         break;
 
                     case Stage.Apply:
+                        if (m_PendingKind == OperationKind.TransitStopMove) {
+                            ApplyTransitStopMovePreview();
+                            m_Stage = Stage.Finish;
+                            break;
+                        }
                         if (m_PendingKind == OperationKind.Terrain)
                         {
                             if (GetAllowApply()) { applyMode = ApplyMode.Apply; m_TerrainAppliedPasses++; }
@@ -495,7 +522,7 @@ namespace CS2MCP
                         else if (GetAllowApply())
                         {
                             applyMode = ApplyMode.Apply;
-                            if (m_PendingKind != OperationKind.ExtractorAreaEdit && m_PendingKind != OperationKind.BuildingMove)
+                            if (m_PendingKind != OperationKind.BuildingMove)
                                 m_PendingApplyResponse = BuildSuccessResponse();
                         }
                         else
@@ -511,6 +538,12 @@ namespace CS2MCP
                         break;
 
                     case Stage.Finish:
+                        if (m_PendingKind == OperationKind.TransitStopMove) {
+                            if (!CompleteTransitStopMove()) break;
+                            applyMode = ApplyMode.None;
+                            Deactivate();
+                            break;
+                        }
                         if (m_PendingKind == OperationKind.Terrain && m_PendingRequest != null)
                         {
                             if (m_TerrainAppliedPasses < m_TerrainPasses) { m_Stage = Stage.CreateDefinitions; applyMode = ApplyMode.Clear; break; }
@@ -518,7 +551,6 @@ namespace CS2MCP
                                 note = "native terrain brush applied; GPU heightmap and water updates are asynchronous; resample terrain and environment after update, not proof of final target height" }));
                         }
                         if (m_PendingKind == OperationKind.Zoning) CompleteZoning();
-                        if (m_PendingKind == OperationKind.ExtractorAreaEdit) CompleteExtractorAreaEdit();
                         if (m_PendingKind == OperationKind.Upgrade && m_PendingApplyResponse != null && m_PendingRequest != null)
                         {
                             CompositionFlags actual = EntityManager.Exists(m_PendingTarget) && EntityManager.HasComponent<Upgraded>(m_PendingTarget)
@@ -554,7 +586,10 @@ namespace CS2MCP
             catch (Exception e)
             {
                 Mod.Log.Warn($"BridgeToolSystem error in stage {m_Stage}: {e}");
-                CompletePending(BridgeResponse.Error(500, $"placement failed: {e.GetType().Name}: {e.Message}"));
+                CompletePending(m_PendingKind == OperationKind.TransitStopMove
+                    ? BridgeResponse.Json(new { error = $"stop relocation failed: {e.GetType().Name}: {e.Message}",
+                        mayHaveApplied = m_StopMoveApplied, safeToRetry = false }, 500)
+                    : BridgeResponse.Error(500, $"placement failed: {e.GetType().Name}: {e.Message}"));
                 applyMode = ApplyMode.None;
                 Deactivate();
             }
@@ -648,6 +683,9 @@ namespace CS2MCP
             m_PendingPrefab = null;
             m_PendingApplyResponse = null;
             m_PendingPrefabEntity = Entity.Null;
+            m_StopMoveReadContract = null;
+            m_StopMoveContract = null;
+            m_StopMoveApplied = false;
             m_RoadLayout = null;
             m_RoadRemovalTargets = null;
             m_ZonePreview?.Clear();
@@ -915,8 +953,7 @@ namespace CS2MCP
                 m_Position = m_PendingPosition,
                 m_Rotation = m_PendingRotation,
             };
-            // 与原生 ObjectTool 一样，为专门产业占位选择所属经营建筑。
-            definitions.m_AttachmentPrefab = CreateNativePlaceholderAttachment(definitions.m_RandomSeed);
+            definitions.m_AttachmentPrefab = default;
             definitions.m_OwnerData = GetComponentLookup<Owner>(true);
             definitions.m_TransformData = GetComponentLookup<Transform>(true);
             definitions.m_AttachedData = GetComponentLookup<Game.Objects.Attached>(true);
@@ -968,15 +1005,23 @@ namespace CS2MCP
             definitions.m_WaterSurfaceData = m_WaterSystem.GetSurfaceData(out _);
             definitions.m_TerrainHeightData = m_TerrainSystem.GetHeightData();
             definitions.m_CommandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
-            try { definitions.Execute(); }
-            finally { if (definitions.m_AttachmentPrefab.IsCreated) definitions.m_AttachmentPrefab.Dispose(); }
+            definitions.Execute();
         }
 
         private JobHandle CreateBuildingUpgradeDefinitions(JobHandle inputDeps)
         {
             var points = new NativeList<ControlPoint>(1, Allocator.TempJob);
-            points.Add(new ControlPoint { m_Position = m_PendingPosition, m_Rotation = m_PendingRotation,
-                m_ElementIndex = new int2(-1, -1) });
+            try
+            {
+                points.Add(new ControlPoint { m_Position = m_PendingPosition, m_Rotation = m_PendingRotation,
+                    m_ElementIndex = new int2(-1, -1) });
+            }
+            catch
+            {
+                // 尚未进入原生调度，控制点仍由本方法独占。
+                points.Dispose();
+                throw;
+            }
             var handle = CreateDefinitions(m_PendingPrefabEntity, Entity.Null, Entity.Null, m_PendingTarget,
                 Entity.Null, Entity.Null, m_CityConfigurationSystem.defaultTheme, points, default,
                 false, m_CityConfigurationSystem.leftHandTraffic, false, false, 1f, 0f, 1f, 1f, 0.1f,
@@ -993,11 +1038,20 @@ namespace CS2MCP
         private JobHandle CreateRoadAttachedBuildingDefinitions(JobHandle inputDeps, Entity original)
         {
             var points = new NativeList<ControlPoint>(1, Allocator.TempJob);
-            var point = m_PendingAttachedPoint;
-            point.m_Position = m_PendingPosition;
-            point.m_Rotation = m_PendingRotation;
-            point.m_ElementIndex = new int2(-1, -1);
-            points.Add(point);
+            try
+            {
+                var point = m_PendingAttachedPoint;
+                point.m_Position = m_PendingPosition;
+                point.m_Rotation = m_PendingRotation;
+                point.m_ElementIndex = new int2(-1, -1);
+                points.Add(point);
+            }
+            catch
+            {
+                // CreateDefinitions之后可能已有读作业；这里只释放调度前的失败准备。
+                points.Dispose();
+                throw;
+            }
             var handle = CreateDefinitions(m_PendingPrefabEntity, Entity.Null, Entity.Null, Entity.Null,
                 original, Entity.Null, m_CityConfigurationSystem.defaultTheme, points, default,
                 false, m_CityConfigurationSystem.leftHandTraffic, false, false, 1f, 0f, 1f, 0f, 0.1f,

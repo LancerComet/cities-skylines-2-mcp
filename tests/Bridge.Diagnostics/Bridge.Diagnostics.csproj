@@ -10,5 +10,6 @@
     <Compile Include="../../CS2MCP.Bridge/HttpBridgeServer.cs" Link="HttpBridgeServer.cs" />
     <Compile Include="../../CS2MCP.Bridge/RuntimeMemory.cs" Link="RuntimeMemory.cs" />
     <Compile Include="../../CS2MCP.Bridge/SignalUiLimits.cs" Link="SignalUiLimits.cs" />
+    <Compile Include="../../CS2MCP.Bridge/LaunchFramePolicy.cs" Link="LaunchFramePolicy.cs" />
   </ItemGroup>
 </Project>

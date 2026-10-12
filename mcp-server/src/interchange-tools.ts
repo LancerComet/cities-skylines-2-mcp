@@ -18,7 +18,7 @@ export function registerInterchangeTools(server: McpServer, requireVersion: () =
     annotations: {readOnlyHint:false,destructiveHint:true,openWorldHint:false},
     inputSchema: {prefab:z.string().min(1),x:z.number().finite().min(-7168).max(7168),z:z.number().finite().min(-7168).max(7168),rotation:z.number().finite().default(0),elevation:z.number().finite().min(-30).max(60).default(0),dryRun:z.boolean().default(true)},
   }, async(args) => {
-    try { await requireVersion(); return jsonResult(await bridgeJson(`/build/interchange/place?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,30000)); }
+    try { await requireVersion(); return jsonResult(await bridgeJson(`/build/interchange/place?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,30000,undefined,{method:"POST"})); }
     catch(error) { return errorResult(error); }
   });
 }

@@ -128,11 +128,11 @@ namespace CS2MCP
                 {
                     var prefab = prefabSystem.GetPrefab<ResourcePrefab>(entity);
                     Resource resource = EconomyUtils.GetResource(prefab.m_Resource);
-                    foreach (var area in new[] { TaxAreaType.Commercial, TaxAreaType.Industrial, TaxAreaType.Office })
+                    foreach (var area in new[] { TaxAreaType.Commercial, TaxAreaType.Office })
                         if (TaxResourceMatches(prefab, area))
                         {
                             int rate = area == TaxAreaType.Commercial ? tax.GetCommercialTaxRate(resource)
-                                : area == TaxAreaType.Office ? tax.GetOfficeTaxRate(resource) : tax.GetIndustrialTaxRate(resource);
+                                : tax.GetOfficeTaxRate(resource);
                             resources.Add(new { area = area.ToString(), resource = resource.ToString(), rate,
                                 allowedRange = new { min = parameters.m_ResourceTaxLimits.x, max = parameters.m_ResourceTaxLimits.y } });
                         }
@@ -176,9 +176,9 @@ namespace CS2MCP
                 }
                 else
                 {
-                    if (area == TaxAreaType.Residential || !Enum.TryParse(request.Query["resource"], true, out Resource resource)
+                    if (area == TaxAreaType.Residential || area == TaxAreaType.Industrial || !Enum.TryParse(request.Query["resource"], true, out Resource resource)
                         || resource == Resource.NoResource || !Enum.IsDefined(typeof(Resource), resource))
-                        return BridgeResponse.Error(400, "resource requires a taxable Commercial/Industrial/Office product");
+                        return BridgeResponse.Error(400, "resource requires a taxable Commercial/Office product");
                     var prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
                     var entity = World.GetOrCreateSystemManaged<ResourceSystem>().GetPrefab(resource);
                     if (!prefabSystem.TryGetPrefab<ResourcePrefab>(entity, out var prefab) || !TaxResourceMatches(prefab, area))
@@ -187,7 +187,6 @@ namespace CS2MCP
                     if (rate < range.x || rate > range.y) return BridgeResponse.Error(400, "individual resource rate outside native allowed range");
                     tax.Readers.Complete();
                     if (area == TaxAreaType.Commercial) tax.SetCommercialTaxRate(resource, rate);
-                    else if (area == TaxAreaType.Industrial) tax.SetIndustrialTaxRate(resource, rate);
                     else tax.SetOfficeTaxRate(resource, rate);
                 }
                 return GetTaxes();

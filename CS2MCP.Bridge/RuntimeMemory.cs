@@ -64,21 +64,32 @@ namespace CS2MCP
             // 未知计数器不能当作内存充足；读取、保存及退出不受施工路由保护影响。
             public bool constructionAllowed = false;
             public string unavailableReason;
+            public string commitBudgetSource = "GlobalMemoryStatusEx; process-constrained commit budget, not a direct system CommitTotal";
+            public string constructionFailureReason = "counter_unavailable";
+            public ulong? requiredCommitReserveBytes, privateCommitCeilingBytes;
             internal void SetCommitBudget(ulong limit, ulong available, long privateBytes)
             {
                 commitLimitBytes = limit;
                 availableCommitBytes = available;
                 privateMemoryBytes = privateBytes;
                 constructionAllowed = false;
+                constructionFailureReason = "counter_unavailable";
+                requiredCommitReserveBytes = null;
+                privateCommitCeilingBytes = null;
                 if (limit == 0 || available > limit || privateBytes <= 0) {
                     unavailableReason = "invalid_native_memory_counters";
                     return;
                 }
                 unavailableReason = null;
                 ulong reserve = Math.Max(2UL * 1024 * 1024 * 1024, limit / 100 * 15);
-                constructionAllowed = available > reserve && (ulong)privateBytes < limit / 100 * 65;
+                ulong privateCeiling = limit / 100 * 65;
+                requiredCommitReserveBytes = reserve;
+                privateCommitCeilingBytes = privateCeiling;
+                constructionAllowed = available > reserve && (ulong)privateBytes < privateCeiling;
+                constructionFailureReason = constructionAllowed ? null
+                    : available <= reserve ? "commit_reserve" : "process_commit_share";
             }
-            public string rule = "重建/预览前核真实计数器、保留至少15%提交预算且进程低于预算65%；计数器未知拒绝施工，不足先保存正常退出；不是泄漏已修复证明";
+            public string rule = "预览/施工前保留至少15%或2GiB提交余量、进程低于额度65%；未知拒绝。余量不足不等于泄漏或必须重启；保护保存/正常退出按真实压力判断，禁止自动重放";
         }
     }
 }

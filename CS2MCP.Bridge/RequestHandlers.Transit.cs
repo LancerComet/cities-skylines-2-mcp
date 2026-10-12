@@ -448,6 +448,10 @@ namespace CS2MCP
             }
             request.Query.TryGetValue("query", out string search);
             bool includeStops = request.TryGetBool("includeStops", out bool rawInclude) && rawInclude;
+            bool includePathTrace = request.TryGetBool("includePathTrace", out bool rawTrace) && rawTrace;
+            int pathSegment = request.TryGetInt("pathSegment", out int rawSegment) ? math.max(0, rawSegment) : 0;
+            int pathOffset = request.TryGetInt("pathOffset", out int rawOffset) ? math.max(0, rawOffset) : 0;
+            int pathLimit = request.TryGetInt("pathLimit", out int rawPathLimit) ? math.clamp(rawPathLimit, 1, 256) : 128;
             int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 200) : 50;
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
@@ -497,7 +501,8 @@ namespace CS2MCP
                         usage = data.usage,
                         lengthMeters = data.length,
                         stopList = includeStops ? DescribeLineStops(line, names) : null,
-                        pathDiagnostics = includeStops ? DescribeLinePathDiagnostics(line) : null,
+                        pathDiagnostics = includeStops || includePathTrace
+                            ? DescribeLinePathDiagnostics(line, includePathTrace, pathSegment, pathOffset, pathLimit) : null,
                     });
                 }
             }
@@ -544,13 +549,13 @@ namespace CS2MCP
         }
 
         // 原生路径结果与设施/网络几何分开：线路长度与图上连通不能代替每段寻路。
-        private object DescribeLinePathDiagnostics(Entity line)
+        private object DescribeLinePathDiagnostics(Entity line, bool includePathTrace, int pathSegment, int pathOffset, int pathLimit)
         {
             var rows = new List<object>();
             if (!EntityManager.HasBuffer<Game.Routes.RouteSegment>(line)) return new { segments = rows, complete = true };
             var segments = EntityManager.GetBuffer<Game.Routes.RouteSegment>(line, true);
-            foreach (var item in segments) {
-                var segment = item.m_Segment;
+            for (int i = 0; i < segments.Length; i++) {
+                var segment = segments[i].m_Segment;
                 if (!EntityManager.Exists(segment)) { rows.Add(new { entity = Ref(segment), missing = true }); continue; }
                 object information = EntityManager.HasComponent<Game.Pathfind.PathInformation>(segment)
                     ? OptionalModApi.JsonValue(EntityManager.GetComponentData<Game.Pathfind.PathInformation>(segment)) : null;
@@ -558,10 +563,73 @@ namespace CS2MCP
                     ? EntityManager.GetBuffer<Game.Pathfind.PathElement>(segment, true).Length : 0;
                 rows.Add(new { entity = Ref(segment), information, pathElementCount,
                     roadPath = DescribeTransitRoadPath(segment),
+                    networkPath = includePathTrace && i == pathSegment
+                        ? DescribeTransitNetworkPath(segment, pathOffset, pathLimit) : null,
                     targets = EntityManager.HasComponent<Game.Routes.PathTargets>(segment)
                         ? OptionalModApi.JsonValue(EntityManager.GetComponentData<Game.Routes.PathTargets>(segment)) : null });
             }
-            return new { segments = rows, complete = true };
+            return new { segments = rows, complete = true, pathTraceRequested = includePathTrace,
+                pathTraceSegment = includePathTrace ? (object)pathSegment : null,
+                pathTraceSegmentExists = includePathTrace && pathSegment < segments.Length };
+        }
+
+        /// <summary>逐寻路元素读取真实车道、边/节点及完整Owner链，分页不去重以保留往返经过顺序。</summary>
+        private object DescribeTransitNetworkPath(Entity segment, int offset, int limit)
+        {
+            var elements = new List<object>();
+            if (!EntityManager.HasBuffer<Game.Pathfind.PathElement>(segment))
+                return new { elements, totalPathElements = 0, returned = 0, complete = false, reason = "noPathBuffer" };
+            var path = EntityManager.GetBuffer<Game.Pathfind.PathElement>(segment, true);
+            int start = Math.Min(offset, path.Length);
+            int end = start + Math.Min(limit, path.Length - start);
+            bool traceComplete = true;
+            for (int i = start; i < end; i++) {
+                var element = path[i];
+                var trace = TransitPathTrace.WalkOwners(element.m_Target, Entity.Null,
+                    EntityManager.Exists, entity => EntityManager.HasComponent<Game.Common.Owner>(entity)
+                        ? EntityManager.GetComponentData<Game.Common.Owner>(entity).m_Owner : Entity.Null);
+                var owners = new List<object>();
+                var networks = new List<object>();
+                foreach (var entity in trace.Entities) {
+                    var description = DescribeTransitTraceEntity(entity);
+                    owners.Add(description);
+                    if (EntityManager.Exists(entity) && (EntityManager.HasComponent<Game.Net.Edge>(entity)
+                        || EntityManager.HasComponent<Game.Net.Node>(entity))) networks.Add(description);
+                }
+                traceComplete &= trace.Complete;
+                bool lane = EntityManager.Exists(element.m_Target) && EntityManager.HasComponent<Game.Net.Lane>(element.m_Target);
+                elements.Add(new { pathIndex = i, pathElement = OptionalModApi.JsonValue(element),
+                    target = DescribeTransitTraceEntity(element.m_Target),
+                    targetLane = lane ? DescribeTransitLane(element.m_Target) : null,
+                    networks, ownerChain = owners, ownerTraceComplete = trace.Complete,
+                    ownerTraceTermination = trace.Termination, unexaminedOwner = Ref(trace.Next) });
+            }
+            return new { elements, totalPathElements = path.Length, offset = start, returned = elements.Count,
+                nextPathOffset = end < path.Length ? (object)end : null, pageComplete = traceComplete,
+                complete = start == 0 && end == path.Length && traceComplete,
+                note = "PathElement原顺序含重复经过；networks列真实Edge/Node，trackKinds按原生组件，Owner链含车道及母体/升级。分页或归属缺失不证明路径完整；寻路状态与实际运营另验。" };
+        }
+
+        private object DescribeTransitTraceEntity(Entity entity)
+        {
+            if (entity == Entity.Null || !EntityManager.Exists(entity)) return new { entity = Ref(entity), exists = false };
+            var trackKinds = new List<string>();
+            if (EntityManager.HasComponent<Game.Net.SubwayTrack>(entity)) trackKinds.Add("Subway");
+            if (EntityManager.HasComponent<Game.Net.TrainTrack>(entity)) trackKinds.Add("Train");
+            if (EntityManager.HasComponent<Game.Net.TramTrack>(entity)) trackKinds.Add("Tram");
+            Entity owner = EntityManager.HasComponent<Game.Common.Owner>(entity)
+                ? EntityManager.GetComponentData<Game.Common.Owner>(entity).m_Owner : Entity.Null;
+            object endpoints = null;
+            if (EntityManager.HasComponent<Game.Net.Edge>(entity)) {
+                var edge = EntityManager.GetComponentData<Game.Net.Edge>(entity);
+                endpoints = new { start = Ref(edge.m_Start), end = Ref(edge.m_End) };
+            }
+            return new { entity = Ref(entity), exists = true, prefab = PrefabNameOf(entity),
+                edge = EntityManager.HasComponent<Game.Net.Edge>(entity), node = EntityManager.HasComponent<Game.Net.Node>(entity),
+                road = EntityManager.HasComponent<Game.Net.Road>(entity), trackKinds,
+                trackLane = EntityManager.HasComponent<Game.Net.TrackLane>(entity),
+                owner = Ref(owner), ownerPrefab = owner != Entity.Null && EntityManager.Exists(owner) ? PrefabNameOf(owner) : null,
+                endpoints };
         }
 
         /// <summary>按实际线路寻路元素追溯独立路段，供连续公交专道验收；不把两站直线当实际路线。</summary>

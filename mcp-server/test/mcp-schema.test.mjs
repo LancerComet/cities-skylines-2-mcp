@@ -24,14 +24,7 @@ test('fresh MCP handshake is clean and exposes readonly Skyve plus safe force an
   assert.equal(tools.find(t=>t.name==='cs2_place_interchange').inputSchema.properties.dryRun.default,true);
   assert.equal(tools.find(t=>t.name==='cs2_interchange_info').annotations.readOnlyHint,true);
   assert.ok(tools.find(t=>t.name==='cs2_find_prefabs').inputSchema.properties.category.enum.includes('asset'));
-  assert.equal(tools.find(t=>t.name==='cs2_extractor_areas').annotations.readOnlyHint,true);
-  assert.equal(tools.find(t=>t.name==='cs2_natural_resources').annotations.readOnlyHint,true);
-  assert.equal(tools.find(t=>t.name==='cs2_natural_resources').inputSchema.properties.resolution.maximum,64);
-  const extractor=tools.find(t=>t.name==='cs2_edit_extractor_area').inputSchema;
-  assert.deepEqual(extractor.required,['index','version','nodes']);
-  assert.equal(extractor.properties.nodes.minItems,3); assert.equal(extractor.properties.nodes.maxItems,64);
-  assert.equal(extractor.properties.force,undefined); assert.ok(extractor.properties.dryRun);
-  assert.ok(tools.find(t=>t.name==='cs2_production'));
+  for (const name of ['cs2_production','cs2_natural_resources','cs2_extractor_areas','cs2_edit_extractor_area']) assert.equal(tools.some(t=>t.name===name),false);
   assert.equal(tools.find(t=>t.name==='cs2_road_upgrades').annotations.readOnlyHint,true);
   assert.equal(tools.find(t=>t.name==='cs2_pedestrians').annotations.readOnlyHint,true);
   assert.equal(tools.find(t=>t.name==='cs2_pedestrians').inputSchema.properties.limit.maximum,100);
@@ -48,7 +41,7 @@ test('fresh MCP handshake is clean and exposes readonly Skyve plus safe force an
   const inspect=tools.find(t=>t.name==='cs2_inspect');assert.ok(inspect.inputSchema.properties.laneLimit);
   const forced=tools.filter(t=>t.inputSchema.properties?.force);assert.equal(forced.length,10);
   for(const tool of forced) assert.equal(tool.inputSchema.properties.force.const,false);
-  for(const args of [{area:'Residential',rate:10,resource:'Food'},{area:'Office',rate:10,educationLevel:1},{area:'Residential',rate:10,educationLevel:1,resource:'Food'}]) {
+  for(const args of [{area:'Industrial',rate:10,resource:'Food'},{area:'Residential',rate:10,resource:'Food'},{area:'Office',rate:10,educationLevel:1},{area:'Residential',rate:10,educationLevel:1,resource:'Food'}]) {
     const result=await client.callTool({name:'cs2_set_tax',arguments:args});
     assert.equal(result.isError,true); assert.equal(JSON.parse(result.content[0].text).mayHaveApplied,false);
   }
@@ -71,7 +64,7 @@ test('mod mutations refuse older bridges and preserve Chinese structured payload
   requests.length=0;result=await client.callTool({name:'cs2_mod_inspect',arguments:{mod:'Traffic',entity:{index:23}}});assert.equal(result.isError,true);assert.deepEqual(requests,[]);
 });
 
-test('extractor tools encode structured boundaries and refuse older bridges before editing',async t=>{
+test('native camera, road structure and building relocation preserve prerequisite gates',async t=>{
   let version='0.10.2'; const requests=[];
   const mock=createServer((req,res)=>{
     requests.push(req.url);
@@ -81,7 +74,7 @@ test('extractor tools encode structured boundaries and refuse older bridges befo
   await new Promise(resolve=>mock.listen(0,'127.0.0.1',resolve));
   t.after(()=>{mock.closeAllConnections();mock.close();});
   const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
-  const client=new Client({name:'extractor-test',version:'1'});
+  const client=new Client({name:'native-prerequisites-test',version:'1'});
   const transport=new StdioClientTransport({command:process.execPath,args:[resolve(root,'dist/index.js')],cwd:root,
     env:{...process.env,CS2_BRIDGE_URL:`http://127.0.0.1:${mock.address().port}`},stderr:'pipe'});
   t.after(()=>client.close()); await client.connect(transport);
@@ -106,24 +99,7 @@ test('extractor tools encode structured boundaries and refuse older bridges befo
   assert.equal(crossingUrl.pathname,'/build/road-service');assert.equal(crossingUrl.searchParams.get('remove'),'true');
   assert.equal(crossingUrl.searchParams.get('invert'),'true');assert.equal(crossingUrl.searchParams.get('dryRun'),'true');
   version='0.10.2';
-  const nodes=[{x:1980,z:-160},{x:1960,z:-160},{x:1970,z:100}];
-  let result=await client.callTool({name:'cs2_edit_extractor_area',arguments:{index:123,version:1,nodes,dryRun:true}});
-  assert.notEqual(result.isError,true);
-  let url=new URL(requests.at(-1),'http://localhost');
-  assert.equal(url.pathname,'/build/extractor-area/edit');
-  assert.deepEqual(JSON.parse(url.searchParams.get('nodes')),nodes);
-  assert.equal(url.searchParams.get('dryRun'),'true'); assert.equal(url.searchParams.has('force'),false);
-  result=await client.callTool({name:'cs2_natural_resources',arguments:{x:1980,z:-160,radius:300}});
-  assert.notEqual(result.isError,true);
-  url=new URL(requests.at(-1),'http://localhost');
-  assert.equal(url.pathname,'/map/natural-resources');assert.equal(url.searchParams.get('resolution'),'16');
-  version='0.4.0';requests.length=0;
-  result=await client.callTool({name:'cs2_edit_extractor_area',arguments:{index:123,version:1,nodes}});
-  assert.equal(result.isError,true);assert.equal(JSON.parse(result.content[0].text).mayHaveApplied,false);
-  assert.deepEqual(requests,['/ping']);
-  requests.length=0;
-  result=await client.callTool({name:'cs2_edit_extractor_area',arguments:{index:123,version:1,nodes:nodes.slice(0,2)}});
-  assert.equal(result.isError,true);assert.deepEqual(requests,[]);
+  let result, url;
   // 新结构参数不得被旧桥接静默忽略后施工成另一种道路。
   const groundArgs={prefab:'Alley Oneway - Double Sided Parking',x1:10,z1:10,x2:90,z2:10,e1:-7.5,e2:-7.5,composition:'ground',constantSlope:true};
   version='0.4.0';requests.length=0;

@@ -6,15 +6,15 @@ export const BRIDGE_URL = (process.env.CS2_BRIDGE_URL ?? "http://127.0.0.1:8642"
 
 export class BridgeError extends Error {
   constructor(message: string, public readonly mayHaveApplied = false, public readonly safeToRetry = false,
-    public readonly status?: number, public readonly validationErrors?: unknown[]) { super(message); }
+    public readonly status?: number, public readonly validationErrors?: unknown[], public readonly failureDetails?: Record<string, unknown>) { super(message); }
 }
 
 export function isMutation(path: string): boolean {
   const url = new URL(path, "http://127.0.0.1");
   if (url.searchParams.get("dryRun") === "true" && ["/build/place", "/build/road/connect", "/build/terrain", "/build/building/upgrade", "/build/building/rebuild",
-    "/build/place/shoreline", "/build/place/roadside", "/build/extractor-area/edit"].includes(url.pathname)) return false;
+    "/build/place/shoreline", "/build/place/roadside", "/transit/stops/relocate"].includes(url.pathname)) return false;
   return (url.pathname === "/game/milestone-popup" && url.searchParams.get("dismiss") === "true")
-    || url.pathname.startsWith("/build/") || url.pathname === "/mods/anarchy/normal-construction"
+    || url.pathname === "/transit/stops/relocate" || url.pathname.startsWith("/build/") || url.pathname === "/mods/anarchy/normal-construction"
     || url.pathname === "/mods/anarchy/props/refresh"
     || /\/(set|purchase|buy|save|control|run|create|delete|place)$/.test(url.pathname);
 }
@@ -33,12 +33,8 @@ function bridgeAddress(base: string, path: string): URL {
 export async function bridgeFetch(path: string, timeoutMs: number, base = BRIDGE_URL, request: Pick<RequestInit,'method'|'body'|'headers'> = {}): Promise<Response> {
   const url = bridgeAddress(base, path);
   try {
-    // POST matches the bridge's mutating-route contract, including previews.
-    // Classify the pathname here: dryRun describes outcome, not HTTP method.
-    const headers = new Headers(request.headers);
-    if (process.env.CS2MCP_TOKEN) headers.set("X-CS2MCP-Token", process.env.CS2MCP_TOKEN);
-    return await fetch(url, { ...request, headers,
-      method: request.method ?? ((isMutation(url.pathname) || isMutation(url.pathname + url.search)) ? "POST" : "GET"),
+    // 传输层不替调用方决定方法或认证；本PR新增写入工具在调用处显式POST。
+    return await fetch(url, { ...request,
       signal: AbortSignal.timeout(timeoutMs), redirect: "error" });
   } catch (error) {
     throw new BridgeError(`Cannot reach the CS2 bridge (${(error as Error).message}). ` +
@@ -57,9 +53,19 @@ export async function bridgeJson(path: string, timeoutMs = 12_000, base = BRIDGE
     const message = String(failure?.error ?? `bridge returned HTTP ${res.status}`);
     const busy = res.status === 409 && (/^another (build|road|transit) operation is in progress, retry shortly$/i.test(message)
       || message === "another construction operation is in progress");
-    const mayHaveApplied = isMutation(path) && (failure?.mayHaveApplied === true || res.status >= 500);
+    const details = payload as Record<string, unknown>;
+    const stoppedBeforeHandler = details?.code === "bridge_stopped" && failure?.mayHaveApplied === false
+      && details.safeToRetry === false && details.handlerStarted === false
+      && ((details.failurePhase === "prequeue" && details.enqueued === false)
+        || (details.failurePhase === "before_handler" && details.enqueued === true));
+    const mayHaveApplied = isMutation(path) && (failure?.mayHaveApplied === true || res.status >= 500 && !stoppedBeforeHandler);
+    const failureDetails: Record<string, unknown> = {};
+    if (details?.code === "bridge_stopped" || details?.code === "resource_budget")
+      for (const key of ["code","failurePhase","enqueued","handlerStarted","reason","resourceBudget"])
+        if (details[key] !== undefined) failureDetails[key] = details[key];
     throw new BridgeError(message, mayHaveApplied, busy && !mayHaveApplied, res.status,
-      Array.isArray(failure?.validationErrors) ? failure.validationErrors : undefined);
+      Array.isArray(failure?.validationErrors) ? failure.validationErrors : undefined,
+      Object.keys(failureDetails).length ? failureDetails : undefined);
   }
   return payload;
 }
@@ -72,5 +78,5 @@ export function errorResult(error: unknown) {
   const bridge = error instanceof BridgeError ? error : undefined;
   return { ...jsonResult({ error: error instanceof Error ? error.message : String(error),
     mayHaveApplied: bridge?.mayHaveApplied ?? false, safeToRetry: bridge?.safeToRetry ?? false, status: bridge?.status,
-    validationErrors: bridge?.validationErrors }), isError: true };
+    validationErrors: bridge?.validationErrors, ...bridge?.failureDetails }), isError: true };
 }

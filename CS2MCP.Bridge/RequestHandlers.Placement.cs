@@ -203,9 +203,9 @@ namespace CS2MCP
                 return error;
             }
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
-            if (!tool.TryQueuePlacement(prefabEntity, prefab, position, rotation, request))
+            if (!tool.TryQueuePlacement(prefabEntity, prefab, position, rotation, request, out error))
             {
-                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+                return error;
             }
             return null;
         }
@@ -402,9 +402,9 @@ namespace CS2MCP
                 return error;
             }
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
-            if (!tool.TryQueuePlacement(prefabEntity, prefab, position, rotation, request))
+            if (!tool.TryQueuePlacement(prefabEntity, prefab, position, rotation, request, out error))
             {
-                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+                return error;
             }
             // Completed asynchronously by BridgeToolSystem, like cs2_place_building.
             return null;

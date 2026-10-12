@@ -1,10 +1,10 @@
 # 完整工具目录
 
-桥接与 MCP 公共版本：0.10.2；共 121 个工具。
+桥接与 MCP 公共版本：0.10.3；共 118 个工具。
 
-本目录从实际 MCP listTools 握手生成。参数以工具 schema 为准；正常资格、预览、失败恢复和运营验收见 [原生控制与验收](native-control.md)。
+工具名称及描述来自真实 SDK listTools；资格、预览和结果验收见[原生控制与验收](native-control.md)，与相关贡献的职责边界见[贡献范围](contribution-scope.md)。
 
-| 工具 | 作用与边界 |
+| 工具 | 说明 |
 |---|---|
 | `cs2_facility_parking_fees` | 读取原生允许付费停车的停车设施与公共服务建筑：当前启用、实际政策值、原生滑块上下限。手工道路停车使用整体市辖区收费。需要桥接0.10.2。 |
 | `cs2_set_facility_parking_fee` | 通过建筑面板 PaidParking 原生政策设置停车费，严格遵守当前原生上限与解锁，不修改泊位或政策预制体。入队后再次读取确认。需要桥接0.10.2。 |
@@ -22,10 +22,7 @@
 | `cs2_remove_road_layout` | 完整身份逐条验证后统一走原生拆除预览、校验、退款及应用，避免逐段拆除时自动合并导致后续编号过期。默认dryRun=true；仅独立可见道路，不能选择建筑内部网络或重复实体。需桥接0.10.2；操作后读实际道路与资金。 |
 | `cs2_facility_catalog` | 一次按原生服务和菜单归属读取非成长设施及标志性建筑（isSignature单列）：说明、费用、尺寸、锁定、原始容量/效果、正常升级及现场安装数量/位置。固定扩建随父设施列出；空升级数组表示当前原生菜单无手动升级。目录资格不代替正常放置与运营验收。需要桥接0.10.2。 |
 | `cs2_signature_buildings` | 按原生SignatureBuildingData读取住宅、混合用途、商业、工业、办公标志性建筑，含所属分区、正常解锁/内容可用性、实际已建位置、占地和原生全城效果。名称相似的升级与普通成长建筑不混入。需要桥接0.10.2。 |
-| `cs2_move_building` | 原生ObjectTool的Relocate预览、碰撞/资金校验、应用流程；只接受独立手动建筑/标志性建筑，不移动普通分区成长楼、专门产业占位母体或单独子物体。现有专门产业优先原位扩围，成套迁移未接入。普通建筑的扩建与内部结构仍须在应用后独立复核入口、水电、经营和升级；不支持force。dryRun仅位置计算。需要桥接0.10.2。 |
-| `cs2_natural_resources` | 只读石油、矿石、肥沃土地、鱼类的原生格基础量/已使用量/差值，注明格号、尺度、时间和帧。不是吨、百分比或产出预测，不含城市加成/多边形积分，森林使用独立树木数据。粗网格可能漏小矿带；不写资源，不调用编辑器。需要桥接 0.10.2。 |
-| `cs2_extractor_areas` | 有界读取指定建筑的原生自有区域或指定区域：边界、入口、所属、原生编辑限制、资源与采掘计数。原始计数不是吨或月产量，区域存在不代表企业投产。需要桥接 0.10.2。 |
-| `cs2_edit_extractor_area` | 只编辑正常建筑自有且原生允许编辑的采掘 Lot，走原生预览/校验/应用。nodes 不重复闭合点，前两个入口节点须保持原坐标和顺序；保留所属与缓存，遵守原生半径、已购土地和碰撞。dryRun 只检查资格与多边形，不是碰撞/费用/资源/投产预览。不创建独立或隐形资产，不支持 force。需要桥接 0.10.2。 |
+| `cs2_move_building` | 原生ObjectTool的Relocate预览、碰撞/资金校验、应用流程；只接受独立手动建筑/标志性建筑，不移动普通分区成长楼、专门产业占位母体或单独子物体。专门产业须使用独立原生流程。普通建筑的扩建与内部结构仍须在应用后独立复核入口、水电、经营和升级；不支持force。dryRun仅位置计算。需要桥接0.10.2。 |
 | `cs2_skyve_status` | 只读 Skyve 本地缓存和限定日志：原生启用配组、加载模块、兼容性审查版本、必需与可选依赖、脱敏警告。每个来源独立注明时间与读取失败，缓存不是实时兼容性保证。不登录、不修改订阅/配组、不调用会弹出窗口的 Skyve 命令管道。 |
 | `cs2_ping` | Check that Cities: Skylines II is running with the CS2MCP bridge mod loaded. Returns mod version, current game mode (MainMenu / Game / Editor) and whether a save is loading. Works even while a save is still loading; use this first to diagnose connection issues. |
 | `cs2_development` | Native development points, nodes, service and parent prerequisites, and actual purchase eligibility. |
@@ -39,7 +36,7 @@
 | `cs2_city_indicators` | 原生邮政、教育层级、客货运输、旅游、人口迁移及治安统计；结合设施容量和幸福因素判断，不能把零值一概当故障。 |
 | `cs2_utilities` | 与原生信息面板同源的电力、净水、污水供需与真实进出口；读取每个地图外公用事业端口及其所属节点的实际容量和流量。污水外送是付费处置，端口数量不等于全网有效吞吐。需要桥接0.10.2。 |
 | `cs2_outside_connections` | 读取地图外原生连接的客货运输类型、名称、实际位置、所属节点及接入网络，包含海陆空和水电。端口存在不等于线路已运营。需要桥接0.10.2。 |
-| `cs2_set_name` | 重命名建筑、市辖区、公交等实体；路段自动定位整条街道的原生 Aggregate。 |
+| `cs2_set_name` | 重命名建筑、街道、公交等实体；市辖区使用专门编辑流程；路段自动定位整条街道的原生 Aggregate。 |
 | `cs2_set_service_districts` | 原生 ServiceDistrict 范围限制；空列表恢复运行范围内全城服务。先核实其它片区仍有服务，不能随意限制唯一设施。 |
 | `cs2_zone_polygon` | 覆盖多边形内实际可分区格，解决圆刷漏角；默认仅填未分区格，保留原有用途。原生解锁与 ToolUpdate 刷新。 |
 | `cs2_zone_tool` | 直接使用游戏 GenerateZones/ApplyZones。fill 从真实格填满原生连通区域，marquee 按种子格方向框选，paint 沿线细刷；默认保留已有用途。previewOnly 返回实际选中格，maxCells 防止意外扩散。混合用途或公共预留使用框选/多边形。应用后复核 changedCells/verified，不把没长楼当漏格。 |
@@ -52,7 +49,7 @@
 | `cs2_set_save_settings` | 使用游戏原生菜单定时与轮换设置；当前1/2/5/10/30/60分钟，20分钟不是原生菜单选项，不定时覆盖手动主档。原生轮换总数为全本机自动档范围。 |
 | `cs2_graphics_settings` | 读取原生垂直同步、基础渲染帧率上限；显卡驱动插帧后的帧率不在游戏内可读。 |
 | `cs2_resource_diagnostics` | 只读进程提交/物理内存、Unity原生与Mono分配、临时实体、焦点和两次读取间基础帧率；不启用Profiler、不强制GC或卸载资源。 |
-| `cs2_set_graphics_settings` | 使用原生设置关闭/开启垂直同步，并保存本地基础帧率上限；不改变画质与驱动插帧。 |
+| `cs2_set_graphics_settings` | 使用原生设置关闭/开启垂直同步，应用本次基础帧率上限并保存快照；0.10.3起显式background/foreground启动模式选择30/90帧，未指定模式保留玩家设置，不根据焦点自动切换。不改变画质与驱动插帧。 |
 | `cs2_game_state` | Get the current game state: game mode, whether a city is loaded, city name, simulation pause/speed and the in-game date/time. |
 | `cs2_city_overview` | Key statistics of the loaded city: population (plus citizens currently moving in), average happiness and health, city treasury money, XP, in-game date and simulation speed. Requires a loaded city. |
 | `cs2_demand` | Residential (low/medium/high density), commercial, industrial, office and storage demand of the loaded city, including native scale metadata: residential and building-demand bars are 0-100; industrial/office company demand and storage are raw native values, not percentages. Includes factors explaining WHY demand is high or low (e.g. Taxes, Unemployment, EmptyZones, Homelessness). Positive factor values push demand up, negative values push it down. |
@@ -64,7 +61,6 @@
 | `cs2_labor` | Employment data: employed citizens, unemployment rate, homelessness, total/free jobs broken down by required education level, and the population age structure (children/teens/adults/seniors). |
 | `cs2_pedestrians` | 只读原生HumanCurrentLane与Transform，按区域统计当前行人及导航目标，保留目标归属链供天桥与穿越验收。瞬时占用不等于容量或完成出行。 |
 | `cs2_statistics` | Time series of a city statistic (sampled 32x per in-game day). Useful types: Population, Money, Income, Expense, HouseholdCount, WorkerCount, Unemployed, TouristCount, CrimeRate, BirthRate, DeathRate, CitizensMovedIn, CitizensMovedAway, ResidentialTaxableIncome, TrafficFlow-style passenger counts (PassengerCountBus/Subway/Train...). An invalid type returns the full list of valid names. |
-| `cs2_production` | 各资源生产/消费/产能/库存、分类消费、原始进出口和分项企业/建筑/仓储需求，以及实际产业链。原生单位，产能不等于产量，暂停快照不等于即时变化。 |
 | `cs2_anarchy_normal_construction` | 只关闭Anarchy原生设置AnarchicBulldozer并保存，保留正常建造辅助；无启用绕过的参数。返回真实状态。若AnarchyEnabled或允许忽略错误仍存在，施工继续被拒绝。 |
 | `cs2_get_taxes` | 四类税率、原生范围与教育层级/产品分项税率。分项修改可能归一化大类基准，应用后重读全部实际税率。 |
 | `cs2_set_tax` | Set the tax rate (integer percent) for one tax area. Values outside the game's allowed range are rejected. Higher taxes raise income but lower demand and happiness. |
@@ -106,6 +102,7 @@
 | `cs2_transport_overview` | 原生交通信息页同源配置、显示／解锁、线路计数和居民／游客／货运统计，覆盖出租车、公交、铁路、电车、地铁、渡轮、客船、航空和公路货运。横线与零线路分别返回；原始货运单位不冒充人数或吨。需要桥接0.10.2。 |
 | `cs2_list_transit_stops` | List existing transit stops (bus/tram roadside stops, train/metro station platforms) with entity id, type, name, position, owning station building, attached road and the lines already serving each stop. Filter by type and/or spatially (sorted by distance when x/z given). prefabs=true also lists placeable roadside stop prefabs for cs2_place_transit_stop. |
 | `cs2_place_transit_stop` | Place a roadside bus or tram stop at the road nearest to (x, z), on the side of the road where the point is (or on a specific road segment via road). Runs through the game's object tool pipeline: the game attaches the stop to the road, snaps it to the curb, validates it (sidewalk, lanes, overlap, money) and charges the normal cost. Train/metro stops are station buildings: use cs2_place_building for those. Returns the new stop's entity id for cs2_create_transit_line. The road segment is regenerated, so its id may change. |
+| `cs2_relocate_transit_stop` | 已有正常可见路边公交/电车站沿当前挂载道路同侧迁移，保留旧站实体及线路站序/设置。默认完整原生预览；显式dryRun=false才正常校验收费并应用。应用/超时未知禁止重放，真实路径/到站/步行另验。需要桥接0.10.3。 |
 | `cs2_create_transit_line` | Create a bus/tram/metro/train/ship/ferry line through existing stops, in order; the line automatically loops back to the first stop. Each stop is a stop entity id, a station building id (its matching platform is used) or an {x, z} point (snaps to the nearest existing stop of that type within snapRadius). Uses the game's own route pipeline: it waits for the game to pathfind every segment, and fails with an explanation (e.g. 'no bus path from stop #2 to stop #3') instead of creating a broken line. Needs a depot of the same type for vehicles. |
 | `cs2_list_transit_lines` | List transit lines with the same numbers the game's transportation panel shows: name, number, type, color, active/visible, day/night schedule, stop count, vehicles, passengerCount or cargoAmountRaw, usage (occupancy) and length. Cargo raw units are not people or verified tonnes; legacy passengersOnBoard is ambiguous for cargo lines. includeStops=true adds each stop in order with its waiting passengers. The game keeps no per-line ridership history; city-wide passenger series are in cs2_statistics (PassengerCountBus, ...). |
 | `cs2_delete_transit_line` | Delete one transit line (from cs2_list_transit_lines) exactly like the game's own 'delete line' button. Its stops stay in place. Irreversible: double-check the line first. |
@@ -125,5 +122,5 @@
 | `cs2_set_line_policy` | Activate/deactivate a policy on one transit line (name from cs2_line_policies), e.g. the ticket price or vehicle count slider, the same way the line panel does. |
 | `cs2_set_turn_restrictions` | Set native turn restrictions for one incoming road approach at its endpoint junction. Preserves other upgrades and the opposite endpoint. Save first; uses normal validated tool pipeline. Inspect junction car lanes/path owners afterward; native signs may retain Unsafe emergency paths. For right-in/right-out, assess the branch and relevant arterial approaches together, not only traffic lights. |
 | `cs2_set_junction_control` | Set how one road junction (node id from cs2_road_graph) is controlled, like the game's intersection tools: lights = traffic lights, nolights = remove traffic lights, stop = all-way stop, default = the game's automatic choice. Needs a junction of 3 or more roads. Save first: this recreates the junction. |
-| `cs2_line_vehicles` | Vehicle models a transit line can use (the line panel's vehicle selection): the models currently chosen and every candidate for the line's transport type with passenger capacity, role (engine, carriage, multipleUnit or vehicle), max speed and the carriages an engine pulls. |
-| `cs2_set_line_vehicles` | Choose the vehicle model new vehicles on a transit line use, as the line panel's vehicle selection does: primary = engine or single vehicle, secondary = carriage (names from cs2_line_vehicles). clear=true goes back to a random model per vehicle. Vehicles already running keep their model. |
+| `cs2_line_vehicles` | Vehicle models a transit line can use (the line panel's vehicle selection): the models currently chosen 按原生UI客货、能源、尺寸和内容资格筛选；返回slot、容量、货种、速度、车型与实际运行车队。普通列车车厢是primary、机车是secondary；两栏为独立集合，容量与速度保持原生单位。需要桥接0.10.3。 |
+| `cs2_set_line_vehicles` | 按cs2_line_vehicles的slot正常选择单个或多个模型，替换整条线路两个栏的选择集合。普通列车primary是车厢、secondary是机车；不是一一配对。clear恢复原生随机。旧车保持车型，需另外观察。需要桥接0.10.3。 |

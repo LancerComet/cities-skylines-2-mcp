@@ -14,12 +14,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-async function requirePrecisionBridge(label = "精细施工") {
+async function requirePrecisionBridge(label = "精细施工", minimum = 10002) {
   const ping = await bridgeJson("/ping",3000) as {version?:string};
   const match = ping.version?.match(/^(\d+)\.(\d+)\.(\d+)/);
   const parts = match?.slice(1).map(Number);
-  if (!parts || parts[0]*1000100+parts[1]*1000+parts[2] < 10002)
-    throw new BridgeError(`${label}需要桥接0.10.2或更高；当前${ping.version ?? "未知"}，不能让旧桥接静默忽略新参数。`);
+  if (!parts || parts[0]*1000100+parts[1]*1000+parts[2] < minimum)
+    throw new BridgeError(`${label}需要桥接${minimum === 10003 ? "0.10.3" : "0.10.2"}或更高；当前${ping.version ?? "未知"}，不能让旧桥接静默忽略新参数。`);
 }
 
 const roadPathSegment = z.object({
@@ -40,7 +40,7 @@ function validateRoadPath(segments:z.infer<typeof roadPathSegment>[]) {
   }
 }
 
-const server = new McpServer({ name: "cs2-mcp", version: "0.10.2" });
+const server = new McpServer({ name: "cs2-mcp", version: "0.10.3" });
 
 server.registerTool("cs2_facility_parking_fees", {
   title: "读取全部公共设施停车费",
@@ -53,7 +53,7 @@ server.registerTool("cs2_set_facility_parking_fee", {
   description: "通过建筑面板 PaidParking 原生政策设置停车费，严格遵守当前原生上限与解锁，不修改泊位或政策预制体。入队后再次读取确认。需要桥接0.10.2。",
   annotations: { readOnlyHint:false, destructiveHint:false, openWorldHint:false },
   inputSchema: {index:z.number().int().nonnegative(),version:z.number().int().positive(),fee:z.number().finite().nonnegative()},
-}, async args=>{try {await requirePrecisionBridge("公共设施停车收费");return jsonResult(await bridgeJson(`/building/parking-fee/set?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`));}catch(e){return errorResult(e);}});
+}, async args=>{try {await requirePrecisionBridge("公共设施停车收费");return jsonResult(await bridgeJson(`/building/parking-fee/set?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,12_000,undefined,{method:"POST"}));}catch(e){return errorResult(e);}});
 registerModTools(server,()=>requirePrecisionBridge("模组原生接入"),()=>requirePrecisionBridge("原生对象预览"),()=>requirePrecisionBridge("已初始化端部的过街控制"));
 registerInterchangeTools(server,()=>requirePrecisionBridge("原生立交资产"));
 registerRoadLayoutTool(server,()=>requirePrecisionBridge("原生道路布局世界高程范围校验"));
@@ -73,31 +73,10 @@ server.registerTool("cs2_signature_buildings", {
 
 server.registerTool("cs2_move_building", {
   title: "正常搬迁已有建筑",
-  description: "原生ObjectTool的Relocate预览、碰撞/资金校验、应用流程；只接受独立手动建筑/标志性建筑，不移动普通分区成长楼、专门产业占位母体或单独子物体。现有专门产业优先原位扩围，成套迁移未接入。普通建筑的扩建与内部结构仍须在应用后独立复核入口、水电、经营和升级；不支持force。dryRun仅位置计算。需要桥接0.10.2。",
+  description: "原生ObjectTool的Relocate预览、碰撞/资金校验、应用流程；只接受独立手动建筑/标志性建筑，不移动普通分区成长楼、专门产业占位母体或单独子物体。专门产业须使用独立原生流程。普通建筑的扩建与内部结构仍须在应用后独立复核入口、水电、经营和升级；不支持force。dryRun仅位置计算。需要桥接0.10.2。",
   annotations:{readOnlyHint:false,destructiveHint:true,openWorldHint:false},
   inputSchema:{index:z.number().int(),version:z.number().int(),x:z.number().finite(),z:z.number().finite(),rotation:z.number().finite().optional(),dryRun:z.boolean().optional()},
-}, async args=>{try{await requirePrecisionBridge("原生建筑搬迁");return jsonResult(await bridgeJson(`/build/building/move?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000));}catch(e){return errorResult(e);}});
-
-server.registerTool("cs2_natural_resources", {
-  title: "原生资源图限定片区取样",
-  description: "只读石油、矿石、肥沃土地、鱼类的原生格基础量/已使用量/差值，注明格号、尺度、时间和帧。不是吨、百分比或产出预测，不含城市加成/多边形积分，森林使用独立树木数据。粗网格可能漏小矿带；不写资源，不调用编辑器。需要桥接 0.10.2。",
-  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-  inputSchema: { x:z.number().finite().min(-7168).max(7168), z:z.number().finite().min(-7168).max(7168), radius:z.number().finite().min(50).max(7168), resolution:z.number().int().min(4).max(64).default(16) },
-}, async args=>{try {await requirePrecisionBridge("原生资源取样");return jsonResult(await bridgeJson(`/map/natural-resources?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`));}catch(e){return errorResult(e);}});
-
-server.registerTool("cs2_extractor_areas", {
-  title: "读取建筑自有采掘区域",
-  description: "有界读取指定建筑的原生自有区域或指定区域：边界、入口、所属、原生编辑限制、资源与采掘计数。原始计数不是吨或月产量，区域存在不代表企业投产。需要桥接 0.10.2。",
-  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-  inputSchema: { index: z.number().int(), version: z.number().int() },
-}, async args => { try { await requirePrecisionBridge("采掘区域读取"); return jsonResult(await bridgeJson(`/city/extractor-areas?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`)); } catch(e) { return errorResult(e); } });
-
-server.registerTool("cs2_edit_extractor_area", {
-  title: "编辑已有原生采掘区域",
-  description: "只编辑正常建筑自有且原生允许编辑的采掘 Lot，走原生预览/校验/应用。nodes 不重复闭合点，前两个入口节点须保持原坐标和顺序；保留所属与缓存，遵守原生半径、已购土地和碰撞。dryRun 只检查资格与多边形，不是碰撞/费用/资源/投产预览。不创建独立或隐形资产，不支持 force。需要桥接 0.10.2。",
-  annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-  inputSchema: { index: z.number().int(), version: z.number().int(), nodes: z.array(z.object({ x: z.number().finite(), z: z.number().finite() })).min(3).max(64), dryRun: z.boolean().optional() },
-}, async ({index,version,nodes,dryRun}) => { try { await requirePrecisionBridge("采掘区域编辑"); const params=new URLSearchParams({index:String(index),version:String(version),nodes:JSON.stringify(nodes)}); if(dryRun!==undefined)params.set("dryRun",String(dryRun)); return jsonResult(await bridgeJson(`/build/extractor-area/edit?${params}`,30000)); } catch(e) { return errorResult(e); } });
+}, async args=>{try{await requirePrecisionBridge("原生建筑搬迁");return jsonResult(await bridgeJson(`/build/building/move?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000,undefined,{method:"POST"}));}catch(e){return errorResult(e);}});
 
 server.registerTool("cs2_skyve_status", {
   title: "Skyve 模组、兼容性与日志诊断",
@@ -142,7 +121,7 @@ server.registerTool("cs2_development", {
 server.registerTool("cs2_purchase_development", {
   title: "Purchase development node", description: "Spend actual available development points via native DevTreeSystem.Purchase, respecting native prerequisites; never force unlocks.",
   inputSchema: { name: z.string().describe("Exact node name from cs2_development") },
-}, async ({ name }) => { try { return jsonResult(await bridgeJson(`/city/development/purchase?${new URLSearchParams({ name })}`)); } catch (err) { return errorResult(err); } });
+}, async ({ name }) => { try { return jsonResult(await bridgeJson(`/city/development/purchase?${new URLSearchParams({ name })}`,12_000,undefined,{method:"POST"})); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_events", {
   title: "Read city disasters and events", description: "Native event journal and all current burning objects, including forest fires that building notifications omit.", inputSchema: {},
 }, async () => { try { return jsonResult(await bridgeJson("/city/events")); } catch (err) { return errorResult(err); } });
@@ -157,11 +136,11 @@ server.registerTool("cs2_building_details", {
 server.registerTool("cs2_upgrade_building", {
   title: "原生服务建筑扩建", description: "使用 building_details 中正常解锁的扩建项目，经原生工具校验、收费及安装。固定扩建自动按建筑定位，独立扩建需 x/z；成功后复核安装与实际容量。",
   inputSchema: { index:z.number().int(), version:z.number().int(), prefab:z.string(), x:z.number().optional(), z:z.number().optional(), rotation:z.number().optional(), dryRun:z.boolean().optional() },
-}, async (args) => { try { return jsonResult(await bridgeJson(`/build/building/upgrade?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000)); } catch (err) { return errorResult(err); } });
+}, async (args) => { try { return jsonResult(await bridgeJson(`/build/building/upgrade?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000,undefined,{method:"POST"})); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_rebuild_service_building", {
   title: "原生损毁服务设施重建", description: "只对原生灾害救援清障已完成的损毁主体或服务附属原位重建。保留正常预览、碰撞与收费；dryRun默认true，实际应用后回读损毁、附属和端口。",
   inputSchema: { index:z.number().int().min(1), version:z.number().int().min(1), dryRun:z.boolean().default(true) },
-}, async args => { try { await requirePrecisionBridge("正常灾害设施重建"); return jsonResult(await bridgeJson(`/build/building/rebuild?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000)); } catch (err) { return errorResult(err); } });
+}, async args => { try { await requirePrecisionBridge("正常灾害设施重建"); return jsonResult(await bridgeJson(`/build/building/rebuild?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000,undefined,{method:"POST"})); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_happiness", {
   title: "全城幸福度成因", description: "与原生幸福度悬浮面板同源的全部正负贡献。", inputSchema: {},
 }, async () => { try { return jsonResult(await bridgeJson("/city/happiness")); } catch (err) { return errorResult(err); } });
@@ -179,13 +158,13 @@ server.registerTool("cs2_outside_connections", {
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, inputSchema: {},
 }, async () => { try { await requirePrecisionBridge("全部对外连接"); return jsonResult(await bridgeJson("/city/outside-connections")); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_set_name", {
-  title: "原生中文命名", description: "重命名建筑、市辖区、公交等实体；路段自动定位整条街道的原生 Aggregate。",
+  title: "原生中文命名", description: "重命名建筑、街道、公交等实体；市辖区使用专门编辑流程；路段自动定位整条街道的原生 Aggregate。",
   inputSchema: { index: z.number().int(), version: z.number().int(), name: z.string().min(1).max(64) },
-}, async (args) => { try { return jsonResult(await bridgeJson(`/entity/name/set?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000)); } catch (err) { return errorResult(err); } });
+}, async (args) => { try { return jsonResult(await bridgeJson(`/entity/name/set?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000,undefined,{method:"POST"})); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_set_service_districts", {
   title: "分配服务辖区", description: "原生 ServiceDistrict 范围限制；空列表恢复运行范围内全城服务。先核实其它片区仍有服务，不能随意限制唯一设施。",
   inputSchema: { index: z.number().int(), version: z.number().int(), districts: z.array(z.object({index:z.number().int(),version:z.number().int()})).max(50) },
-}, async ({index,version,districts}) => { const params=new URLSearchParams({index:String(index),version:String(version),districts:districts.map(d=>`${d.index}:${d.version}`).join(';')}); try { return jsonResult(await bridgeJson(`/building/districts/set?${params}`)); } catch (err) { return errorResult(err); } });
+}, async ({index,version,districts}) => { const params=new URLSearchParams({index:String(index),version:String(version),districts:districts.map(d=>`${d.index}:${d.version}`).join(';')}); try { return jsonResult(await bridgeJson(`/building/districts/set?${params}`,12_000,undefined,{method:"POST"})); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_zone_polygon", {
   title: "按街坊边界完整分区", description: "覆盖多边形内实际可分区格，解决圆刷漏角；默认仅填未分区格，保留原有用途。原生解锁与 ToolUpdate 刷新。",
   inputSchema: { zone:z.string(), nodes:z.string(), onlyUnzoned:z.boolean().default(true) },
@@ -195,14 +174,14 @@ server.registerTool("cs2_zone_tool", {
   description: "直接使用游戏 GenerateZones/ApplyZones。fill 从真实格填满原生连通区域，marquee 按种子格方向框选，paint 沿线细刷；默认保留已有用途。previewOnly 返回实际选中格，maxCells 防止意外扩散。混合用途或公共预留使用框选/多边形。应用后复核 changedCells/verified，不把没长楼当漏格。",
   inputSchema: { zone:z.string(), mode:z.enum(["fill","marquee","paint"]), x:z.number(), z:z.number(), x2:z.number().optional(), z2:z.number().optional(),
     overwrite:z.boolean().default(false), previewOnly:z.boolean().default(false), maxCells:z.number().int().min(1).max(20000).default(4096) },
-}, async (args) => { const params=new URLSearchParams(); for(const [k,v] of Object.entries(args)) if(v!==undefined) params.set(k,String(v)); try { return jsonResult(await bridgeJson(`/build/zone/tool?${params}`,60000)); } catch(err) { return errorResult(err); } });
+}, async (args) => { const params=new URLSearchParams(); for(const [k,v] of Object.entries(args)) if(v!==undefined) params.set(k,String(v)); try { return jsonResult(await bridgeJson(`/build/zone/tool?${params}`,60000,undefined,{method:"POST"})); } catch(err) { return errorResult(err); } });
 server.registerTool("cs2_terrain_brush", {
   title: "原生地形塑形与坡度衔接",
   description: "raise/lower 抬升或降低，level 按世界高度整平，soften 平滑，slope 从起点高度衔接终点目标高度。原生高度笔刷、纹理、强度、旋转和有限次笔触；检查整个笔刷范围已购地。dryRun 仅核对场址参数，不是假想地形预览。应用后地形/水体异步更新，必须用 terrain/environment_field 复核，岸线及排污不得只凭外观。",
   inputSchema: { mode:z.enum(["raise","lower","level","soften","slope"]), x:z.number(), z:z.number(), x2:z.number().optional(), z2:z.number().optional(),
     size:z.number().min(8).max(1000).default(64), strength:z.number().positive().max(1).default(.3), angle:z.number().optional(),
     targetHeight:z.number().min(-1024).max(4096).optional(), brush:z.string().optional(), passes:z.number().int().min(1).max(20).default(1), dryRun:z.boolean().default(false) },
-}, async (args) => { const params=new URLSearchParams(); for(const [k,v] of Object.entries(args)) if(v!==undefined) params.set(k,String(v)); try { return jsonResult(await bridgeJson(`/build/terrain?${params}`,60000)); } catch(err) { return errorResult(err); } });
+}, async (args) => { const params=new URLSearchParams(); for(const [k,v] of Object.entries(args)) if(v!==undefined) params.set(k,String(v)); try { return jsonResult(await bridgeJson(`/build/terrain?${params}`,60000,undefined,{method:"POST"})); } catch(err) { return errorResult(err); } });
 server.registerTool("cs2_tool_capabilities", {
   title: "原生精细工具能力与接口覆盖",
   description: "原生工具模式、吸附、笔刷和桥接缺口，以及已加载模组程序集、Anarchy真实状态/校验屏蔽、已接入与未接入的模组能力。只读审计，加载不等于功能全可控，UI偏好不是施工参数。",
@@ -225,7 +204,7 @@ server.registerTool("cs2_save_settings", {
 server.registerTool("cs2_set_save_settings", {
   title: "设置独立原生自动存档", description: "使用游戏原生菜单定时与轮换设置；当前1/2/5/10/30/60分钟，20分钟不是原生菜单选项，不定时覆盖手动主档。原生轮换总数为全本机自动档范围。",
   inputSchema: { enabled:z.boolean().optional(), intervalSeconds:z.union([z.literal(60),z.literal(120),z.literal(300),z.literal(600),z.literal(1800),z.literal(3600)]).optional(), retentionCount:z.union([z.literal(1),z.literal(2),z.literal(3),z.literal(10)]).optional() },
-}, async (args) => { const params = new URLSearchParams(); for (const [key,value] of Object.entries(args)) if (value !== undefined) params.set(key,String(value)); try { return jsonResult(await bridgeJson(`/settings/saves/set?${params}`)); } catch(err) { return errorResult(err); } });
+}, async (args) => { const params = new URLSearchParams(); for (const [key,value] of Object.entries(args)) if (value !== undefined) params.set(key,String(value)); try { return jsonResult(await bridgeJson(`/settings/saves/set?${params}`,12_000,undefined,{method:"POST"})); } catch(err) { return errorResult(err); } });
 server.registerTool("cs2_graphics_settings", {
   title: "游戏帧率设置", description: "读取原生垂直同步、基础渲染帧率上限；显卡驱动插帧后的帧率不在游戏内可读。", inputSchema: {},
 }, async () => { try { return jsonResult(await bridgeJson("/settings/graphics")); } catch (err) { return errorResult(err); } });
@@ -233,15 +212,22 @@ server.registerTool("cs2_resource_diagnostics", {
   title: "读取原生后台资源计数", description: "只读进程提交/物理内存、Unity原生与Mono分配、临时实体、焦点和两次读取间基础帧率；不启用Profiler、不强制GC或卸载资源。", inputSchema: {}, annotations: {readOnlyHint:true},
 }, async () => { try { return jsonResult(await bridgeJson("/diagnostics/resources")); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_set_graphics_settings", {
-  title: "设置游戏基础帧率与垂直同步", description: "使用原生设置关闭/开启垂直同步，并保存本地基础帧率上限；不改变画质与驱动插帧。",
-  inputSchema: { maxFps: z.number().int().min(10).max(240).optional(), vSync: z.boolean().optional() },
-}, async ({ maxFps, vSync }) => {
+  title: "设置游戏基础帧率与垂直同步", description: "使用原生设置关闭/开启垂直同步，应用本次基础帧率上限并保存快照；0.10.3起显式background/foreground启动模式选择30/90帧，未指定模式保留玩家设置，不根据焦点自动切换。不改变画质与驱动插帧。",
+  inputSchema: { maxFps: z.number().int().min(10).max(240).optional(), vSync: z.boolean().optional(), launchMode: z.enum(["background","foreground"]).optional() },
+}, async ({ maxFps, vSync, launchMode }) => {
+  if (vSync === true && (maxFps !== undefined || launchMode !== undefined))
+    return errorResult(new Error("明确限帧或启动模式要求关闭垂直同步，未发送设置。"));
   const params = new URLSearchParams();
   if (maxFps !== undefined) params.set("maxFps", String(maxFps));
   if (vSync !== undefined) params.set("vSync", String(vSync));
+  if (launchMode !== undefined) {
+    if (maxFps !== undefined && maxFps !== (launchMode === "background" ? 30 : 90))
+      return errorResult(new Error("maxFps与明确启动模式预设冲突，未发送设置。"));
+    params.set("launchMode", launchMode);
+  }
   try {
-    await requirePrecisionBridge("图形参数校验与后台限帧恢复");
-    return jsonResult(await bridgeJson(`/settings/graphics/set?${params}`));
+    await requirePrecisionBridge("图形参数校验与明确前后台模式", launchMode !== undefined ? 10003 : 10002);
+    return jsonResult(await bridgeJson(`/settings/graphics/set?${params}`,12_000,undefined,{method:"POST"}));
   } catch (err) { return errorResult(err); }
 });
 
@@ -342,7 +328,7 @@ server.registerTool("cs2_milestone_popup", {
 }, async ({dismiss})=>{
   try {
     await requirePrecisionBridge("原生里程碑通知确认");
-    return jsonResult(await bridgeJson(`/game/milestone-popup${dismiss===undefined?'':`?dismiss=${dismiss}`}`));
+    return jsonResult(await bridgeJson(`/game/milestone-popup${dismiss===undefined?'':`?dismiss=${dismiss}`}`,12_000,undefined,{method:dismiss === true ? "POST" : "GET"}));
   } catch(err) {return errorResult(err);}
 });
 
@@ -461,13 +447,12 @@ server.registerTool(
   },
 );
 
-registerJsonTool("cs2_production", "原生资源与产业链", "各资源生产/消费/产能/库存、分类消费、原始进出口和分项企业/建筑/仓储需求，以及实际产业链。原生单位，产能不等于产量，暂停快照不等于即时变化。", "/city/production");
 
 server.registerTool("cs2_anarchy_normal_construction", {
   title: "禁用Anarchy自动绕过入口",
   description: "只关闭Anarchy原生设置AnarchicBulldozer并保存，保留正常建造辅助；无启用绕过的参数。返回真实状态。若AnarchyEnabled或允许忽略错误仍存在，施工继续被拒绝。",
   inputSchema: {},
-}, async () => { try { return jsonResult(await bridgeJson("/mods/anarchy/normal-construction")); } catch (err) { return errorResult(err); } });
+}, async () => { try { return jsonResult(await bridgeJson("/mods/anarchy/normal-construction",12_000,undefined,{method:"POST"})); } catch (err) { return errorResult(err); } });
 
 registerJsonTool(
   "cs2_get_taxes",
@@ -487,13 +472,13 @@ server.registerTool(
       area: z.enum(["Residential", "Commercial", "Industrial", "Office"]).describe("Tax area to change"),
       rate: z.number().int().describe("New tax rate in percent"),
       educationLevel: z.number().int().min(0).max(4).optional().describe("住宅教育分项，0..4；与resource互斥"),
-      resource: z.string().optional().describe("产品分项，必须是cs2_get_taxes中该类可税产品；与educationLevel互斥"),
+      resource: z.string().optional().describe("商业/办公产品分项，必须是cs2_get_taxes中该类可税产品；与educationLevel互斥"),
     },
   },
   async ({ area, rate, educationLevel, resource }) => {
     try {
       if (educationLevel !== undefined && (resource !== undefined || area !== "Residential")) throw new Error("educationLevel requires Residential and excludes resource");
-      if (resource !== undefined && area === "Residential") throw new Error("resource requires Commercial/Industrial/Office");
+      if (resource !== undefined && (area === "Residential" || area === "Industrial")) throw new Error("resource requires Commercial/Office");
       const params = new URLSearchParams({ area, rate: String(rate) });
       if (educationLevel !== undefined) params.set("educationLevel", String(educationLevel));
       if (resource !== undefined) params.set("resource", resource);
@@ -743,14 +728,14 @@ server.registerTool("cs2_road_upgrades", {
 server.registerTool("cs2_apply_lane_upgrade", {
   title:"原生道路车道升级", description:"使用目录中支持的正常车道工具，保留无关升级和禁转，经原生工具校验收费。invert翻转单侧，remove正常取消；dryRun仅解析标志。禁止force与隐形资产。",
   inputSchema:{index:z.number().int().min(1),version:z.number().int().min(1),prefab:z.string(),invert:z.boolean().optional(),remove:z.boolean().optional(),dryRun:z.boolean().optional()},
-}, async args=>{try {await requirePrecisionBridge("道路车道升级实际回读");return jsonResult(await bridgeJson(`/build/lane-upgrade?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,15000));}catch(e){return errorResult(e);}});
+}, async args=>{try {await requirePrecisionBridge("道路车道升级实际回读");return jsonResult(await bridgeJson(`/build/lane-upgrade?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,15000,undefined,{method:"POST"}));}catch(e){return errorResult(e);}});
 
 server.registerTool("cs2_apply_road_service", {
   title:"原生道路服务调整", description:"按实时目录serviceApplicationSupported应用正常边段升级，含挡土墙、堤岸、高架、隧道、景观和车道；保留无关设置，invert翻转单侧，remove取消。节点及禁转用各自工具，Ground/恒坡用connect_road显式参数。dryRun仅解析标志，正常原生碰撞与收费，不启用错误屏蔽。",
   inputSchema:{index:z.number().int().min(1),version:z.number().int().min(1),prefab:z.string(),invert:z.boolean().optional(),remove:z.boolean().optional(),dryRun:z.boolean().optional()},
 }, async args=>{try {
   if(args.prefab==='Crosswalk') throw new BridgeError('过街必须指定节点和接邻道路，使用 nodeController.crosswalk；边段服务入口不接受 Crosswalk。');
-  await requirePrecisionBridge("道路服务调整实际回读");return jsonResult(await bridgeJson(`/build/road-service?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,15000));
+  await requirePrecisionBridge("道路服务调整实际回读");return jsonResult(await bridgeJson(`/build/road-service?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,15000,undefined,{method:"POST"}));
 }catch(e){return errorResult(e);}});
 
 server.registerTool(
@@ -1335,6 +1320,26 @@ server.registerTool(
   },
 );
 
+server.registerTool("cs2_relocate_transit_stop", {
+  title: "原生同路同侧迁站并保留现线",
+  description: "已有正常可见路边公交/电车站沿当前挂载道路同侧迁移，保留旧站实体及线路站序/设置。默认完整原生预览；显式dryRun=false才正常校验收费并应用。应用/超时未知禁止重放，真实路径/到站/步行另验。需要桥接0.10.3。",
+  annotations: {readOnlyHint:false, destructiveHint:true, openWorldHint:false},
+  inputSchema: {
+    index:z.number().int().nonnegative(), version:z.number().int().positive(),
+    x:z.number().finite(), z:z.number().finite(),
+    road:z.object({index:z.number().int().nonnegative(),version:z.number().int().positive()}).strict(),
+    expectedLoadedSaveGuid:z.string().regex(/^[a-fA-F0-9]{32}$/),
+    dryRun:z.boolean().default(true),
+  },
+}, async ({index,version,x,z:zCoord,road,expectedLoadedSaveGuid,dryRun})=>{
+  try {
+    await requirePrecisionBridge("原生保线迁站", 10003);
+    const params = new URLSearchParams({index:String(index),version:String(version),x:String(x),z:String(zCoord),
+      road:`${road.index}:${road.version}`,expectedLoadedSaveGuid,dryRun:String(dryRun)});
+    return jsonResult(await bridgeJson(`/transit/stops/relocate?${params}`,60_000,undefined,{method:"POST"}));
+  } catch(error) {return errorResult(error);}
+});
+
 server.registerTool(
   "cs2_create_transit_line",
   {
@@ -1391,16 +1396,25 @@ server.registerTool(
       type: transitType.optional().describe("Only lines of this transport type"),
       query: z.string().optional().describe("Case-insensitive line name substring"),
       includeStops: z.boolean().optional().describe("Include the ordered stop list with waiting passengers"),
+      includePathTrace: z.boolean().optional().describe("只读真实PathElement网络路径；每条匹配线路只展开pathSegment指定的一段，保留原roadPath"),
+      pathSegment: z.number().int().min(0).optional().describe("逐线路RouteSegment的0基序号，默认0；不存在会明确回报"),
+      pathOffset: z.number().int().min(0).optional().describe("该段PathElement的分页起点，默认0；重复经过不去重"),
+      pathLimit: z.number().int().min(1).max(256).optional().describe("每段本页PathElement数量，默认128；按nextPathOffset续读，Owner最多12层"),
       limit: z.number().int().min(1).max(200).optional().describe("Max results (default 50)"),
     },
   },
-  async ({ type, query, includeStops, limit }) => {
+  async ({ type, query, includeStops, includePathTrace, pathSegment, pathOffset, pathLimit, limit }) => {
     const params = new URLSearchParams();
     if (type) params.set("type", type);
     if (query) params.set("query", query);
     if (includeStops) params.set("includeStops", "true");
+    if (includePathTrace) params.set("includePathTrace", "true");
+    if (pathSegment !== undefined) params.set("pathSegment", String(pathSegment));
+    if (pathOffset !== undefined) params.set("pathOffset", String(pathOffset));
+    if (pathLimit !== undefined) params.set("pathLimit", String(pathLimit));
     if (limit) params.set("limit", String(limit));
     try {
+      if (includePathTrace) await requirePrecisionBridge("真实线路网络路径", 10003);
       return jsonResult(await bridgeJson(`/transit/lines?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
@@ -1663,7 +1677,7 @@ server.registerTool("cs2_road_path", {
     for(const segment of segments) {
       const params=new URLSearchParams({prefab,dryRun:String(dryRun)});
       for(const [k,v] of Object.entries(segment)) if(v!==undefined) params.set(k,String(v));
-      results.push(await bridgeJson(`/build/road/connect?${params}`,15000));
+      results.push(await bridgeJson(`/build/road/connect?${params}`,15000,undefined,{method:"POST"}));
     }
     return jsonResult({completed:results.length,total:segments.length,dryRun,results,note:"批次返回后按实际road_graph核验端点连接和高度； native成本/碰撞校验逐段进行，不具备整体回滚"});
   } catch(err) {
@@ -1897,7 +1911,7 @@ server.registerTool(
     if (args.forbidLeft && args.forbidRight && args.forbidStraight)
       return errorResult(new Error("Cannot forbid all approach movements"));
     const params = new URLSearchParams(Object.entries(args).map(([key, value]) => [key, String(value)]));
-    try { return jsonResult(await bridgeJson(`/build/turn-restrictions?${bridgeQueryString(params)}`, 15_000)); }
+    try { return jsonResult(await bridgeJson(`/build/turn-restrictions?${bridgeQueryString(params)}`, 15_000,undefined,{method:"POST"})); }
     catch (err) { return errorResult(err); }
   },
 );
@@ -1932,8 +1946,8 @@ server.registerTool(
     title: "Transit line vehicle models",
     description:
       "Vehicle models a transit line can use (the line panel's vehicle selection): the models currently chosen " +
-      "and every candidate for the line's transport type with passenger capacity, role (engine, carriage, " +
-      "multipleUnit or vehicle), max speed and the carriages an engine pulls.",
+      "按原生UI客货、能源、尺寸和内容资格筛选；返回slot、容量、货种、速度、车型与实际运行车队。" +
+      "普通列车车厢是primary、机车是secondary；两栏为独立集合，容量与速度保持原生单位。需要桥接0.10.3。",
     inputSchema: {
       index: z.number().int().describe("Line entity index (cs2_list_transit_lines)"),
       version: z.number().int().describe("Line entity version"),
@@ -1942,6 +1956,7 @@ server.registerTool(
   async ({ index, version }) => {
     const params = new URLSearchParams({ index: String(index), version: String(version) });
     try {
+      await requirePrecisionBridge("正常客货车型与实际车队", 10003);
       return jsonResult(await bridgeJson(`/transit/lines/vehicles?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
@@ -1954,25 +1969,34 @@ server.registerTool(
   {
     title: "Set transit line vehicle model",
     description:
-      "Choose the vehicle model new vehicles on a transit line use, as the line panel's vehicle selection does: " +
-      "primary = engine or single vehicle, secondary = carriage (names from cs2_line_vehicles). clear=true goes " +
-      "back to a random model per vehicle. Vehicles already running keep their model.",
+      "按cs2_line_vehicles的slot正常选择单个或多个模型，替换整条线路两个栏的选择集合。" +
+      "普通列车primary是车厢、secondary是机车；不是一一配对。clear恢复原生随机。旧车保持车型，需另外观察。需要桥接0.10.3。",
     inputSchema: {
       index: z.number().int().describe("Line entity index"),
       version: z.number().int().describe("Line entity version"),
-      primary: z.string().optional().describe("Engine or single-vehicle model name"),
-      secondary: z.string().optional().describe("Carriage model name (trains)"),
+      primary: z.string().min(1).optional().describe("原生primary栏单个候选名；普通列车为车厢"),
+      secondary: z.string().min(1).optional().describe("原生secondary栏单个候选名；普通列车为机车"),
+      primaryModels: z.array(z.string().min(1)).max(32).optional().describe("primary栏完整候选集合，不能与primary并用"),
+      secondaryModels: z.array(z.string().min(1)).max(32).optional().describe("secondary栏完整候选集合，不能与secondary并用"),
       clear: z.boolean().optional().describe("Remove the choice (random model per vehicle)"),
       force: z.literal(false).optional().describe("正常发展规则只接受 false；不能绕过解锁或碰撞"),
     },
   },
-  async ({ index, version, primary, secondary, clear, force }) => {
+  async ({ index, version, primary, secondary, primaryModels, secondaryModels, clear, force }) => {
     const params = new URLSearchParams({ index: String(index), version: String(version) });
     if (primary !== undefined) params.set("primary", primary);
     if (secondary !== undefined) params.set("secondary", secondary);
+    if (primaryModels !== undefined) params.set("primaryModels", JSON.stringify(primaryModels));
+    if (secondaryModels !== undefined) params.set("secondaryModels", JSON.stringify(secondaryModels));
     if (clear !== undefined) params.set("clear", String(clear));
     if (force !== undefined) params.set("force", String(force));
     try {
+      if ((primary !== undefined && primaryModels !== undefined) || (secondary !== undefined && secondaryModels !== undefined))
+        throw new Error("单个模型与同栏集合不能并用");
+      const choices = primary !== undefined || secondary !== undefined || primaryModels !== undefined || secondaryModels !== undefined;
+      if ((clear === true && choices) || (clear !== true && !choices)) throw new Error("提供车型选择或clear=true，不能并用");
+      for (const models of [primaryModels, secondaryModels]) if (models && new Set(models.map(x=>x.toLowerCase())).size !== models.length) throw new Error("车型集合不能重复");
+      await requirePrecisionBridge("原生客货车型集合选择", 10003);
       return jsonResult(await bridgeJson(`/transit/lines/vehicles/set?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
@@ -1982,4 +2006,4 @@ server.registerTool(
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error(`cs2-mcp 0.10.2 running on stdio (bridge: ${BRIDGE_URL})`);
+console.error(`cs2-mcp 0.10.3 running on stdio (bridge: ${BRIDGE_URL})`);

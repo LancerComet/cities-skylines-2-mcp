@@ -65,7 +65,7 @@ namespace CS2MCP
                 if (!math.isfinite(y) || y < -100 || y > 3000) return BridgeResponse.Error(400, "invalid y"); position.y = y;
             }
             if (TransitToolsBusy(out error)) return error;
-            if (!World.GetExistingSystemManaged<BridgeToolSystem>().TryQueuePlacement(entity, prefab, position, quaternion.RotateY(math.radians(rotation)), request)) return BridgeResponse.Error(409, "another build operation is in progress");
+            if (!World.GetExistingSystemManaged<BridgeToolSystem>().TryQueuePlacement(entity, prefab, position, quaternion.RotateY(math.radians(rotation)), request, out error)) return error;
             return null;
         }
     }

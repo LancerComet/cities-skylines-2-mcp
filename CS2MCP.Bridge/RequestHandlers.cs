@@ -55,7 +55,7 @@ namespace CS2MCP
                 && selectedAsset.IndexOf("Invisible", StringComparison.OrdinalIgnoreCase) >= 0
                 && (request.Path.StartsWith("/build/", StringComparison.Ordinal) || request.Path == "/transit/stops/place"))
                 return BridgeResponse.Error(400, "standalone invisible assets are prohibited; native internal building paths are not affected");
-            if (request.Path.StartsWith("/build/", StringComparison.Ordinal) || request.Path == "/transit/stops/place")
+            if (request.Path.StartsWith("/build/", StringComparison.Ordinal) || request.Path == "/transit/stops/place" || request.Path == "/transit/stops/relocate")
             {
                 if (!CheckNormalModConstruction(out BridgeResponse constructionError)) return constructionError;
                 if (request.Path != "/build/mod/action" && BridgeModToolSystem.Instance?.Busy == true)
@@ -117,12 +117,6 @@ namespace CS2MCP
                     return GetFacilityParkingFees();
                 case "/building/parking-fee/set":
                     return SetFacilityParkingFee(request);
-                case "/city/extractor-areas":
-                    return GetExtractorAreas(request);
-                case "/map/natural-resources":
-                    return GetNaturalResourceField(request);
-                case "/build/extractor-area/edit":
-                    return EditExtractorArea(request);
                 case "/build/building/upgrade":
                     return UpgradeServiceBuilding(request);
                 case "/build/building/rebuild":
@@ -145,8 +139,6 @@ namespace CS2MCP
                     return GetCityOverview();
                 case "/city/demand":
                     return GetDemand();
-                case "/city/production":
-                    return GetProduction();
                 case "/city/budget":
                     return GetBudget();
                 case "/city/services":
@@ -255,6 +247,8 @@ namespace CS2MCP
                     return ListTransitStops(request);
                 case "/transit/stops/place":
                     return PlaceTransitStop(request);
+                case "/transit/stops/relocate":
+                    return RelocateTransitStop(request);
                 case "/transit/lines":
                     return ListTransitLines(request);
                 case "/transit/lines/create":

@@ -23,6 +23,7 @@ namespace CS2MCP
 
         private readonly int m_Port;
         private readonly Action<BridgeRequest> m_EnqueueToMainThread;
+        private readonly object m_DispatchGate = new object();
         private TcpListener m_Listener;
         private Thread m_AcceptThread;
         private volatile bool m_Running;
@@ -48,16 +49,20 @@ namespace CS2MCP
 
         public void Stop()
         {
-            m_Running = false;
-            try
+            // 与请求入队共用同步门：Stop返回后，不再有旧连接交付新请求。
+            lock (m_DispatchGate)
             {
-                m_Listener?.Stop();
+                m_Running = false;
+                try
+                {
+                    m_Listener?.Stop();
+                }
+                catch
+                {
+                    // listener already gone
+                }
+                m_Listener = null;
             }
-            catch
-            {
-                // listener already gone
-            }
-            m_Listener = null;
         }
 
         private void AcceptLoop()
@@ -104,24 +109,45 @@ namespace CS2MCP
 
         private BridgeResponse Dispatch(BridgeRequest request)
         {
-            // Liveness check, answered off the simulation thread so it works
-            // even while the game is loading a save.
-            if (request.Path == "/ping")
+            lock (m_DispatchGate)
             {
-                return HandlePing();
-            }
+                if (!m_Running) return StoppedBeforeHandler(enqueued: false);
+                // Liveness check, answered off the simulation thread so it works
+                // even while the game is loading a save.
+                if (request.Path == "/ping")
+                {
+                    return HandlePing();
+                }
 
-            if (request.Path.StartsWith("/build/", StringComparison.Ordinal)) {
-                var memory = RuntimeMemory.Read();
-                if (!memory.constructionAllowed)
-                    return BridgeResponse.Error(409, memory.unavailableReason != null
-                        ? "内存计数器无法核验；施工/预览尚未排队。读取/ping诊断，禁止自动重试旧批次；保存和正常退出仍可用。"
-                        : "内存提交预算不足；施工/预览尚未排队。先保存并正常退出重启，读取新现场后继续，禁止自动重试旧批次。");
+                if (request.Path.StartsWith("/build/", StringComparison.Ordinal) || request.Path == "/transit/stops/relocate") {
+                    var memory = RuntimeMemory.Read();
+                    if (!memory.constructionAllowed)
+                        return BridgeResponse.Json(new {
+                            code = "resource_budget", failurePhase = "prequeue", enqueued = false,
+                            handlerStarted = false, mayHaveApplied = false, safeToRetry = false,
+                            reason = memory.unavailableReason != null ? "counter_unavailable" : memory.constructionFailureReason,
+                            error = memory.unavailableReason != null
+                                ? "内存计数器无法核验；施工/预览尚未排队。先核计数器，不自动重试或重启；保存和正常退出仍可用。"
+                                : "内存提交预算不足；施工/预览尚未排队。先核实际资源压力，待余量恢复后读取新现场；不自动重试旧批次或要求重启。",
+                            resourceBudget = memory
+                        }, 409);
+                }
+                m_EnqueueToMainThread(request);
             }
-            m_EnqueueToMainThread(request);
+            // 等待不能持有关闭门；StopServer需要完成仍未处理的排队请求。
             BridgeResponse response = request.WaitForResponse(MainThreadTimeoutMs);
             return response ?? BridgeResponse.Error(503,
                 "simulation thread did not respond within 10s (game still loading, or bridge system disabled)");
+        }
+
+        /// <summary>只用于尚未交付或尚在队列的请求；已交给处理器的异步结果不能由停止路径覆盖。</summary>
+        internal static BridgeResponse StoppedBeforeHandler(bool enqueued)
+        {
+            return BridgeResponse.Json(new {
+                code = "bridge_stopped", error = "桥接已停止，请求尚未开始处理；不自动重试。",
+                failurePhase = enqueued ? "before_handler" : "prequeue", enqueued,
+                handlerStarted = false, mayHaveApplied = false, safeToRetry = false
+            }, 503);
         }
 
         private static BridgeResponse HandlePing()

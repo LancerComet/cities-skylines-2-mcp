@@ -41,6 +41,13 @@ Check(!Budget(100 * GiB, 15 * GiB, (long)GiB).constructionAllowed, "reserve boun
 Check(Budget(100 * GiB, 16 * GiB, (long)(64 * GiB)).constructionAllowed, "sufficient budget rejected");
 Check(!Budget(100 * GiB, 80 * GiB, (long)(65 * GiB)).constructionAllowed, "process boundary admitted");
 Check(!Budget(8 * GiB, 2 * GiB, (long)GiB).constructionAllowed, "minimum reserve boundary admitted");
+Check(Budget(100 * GiB, 15 * GiB, (long)GiB).constructionFailureReason == "commit_reserve", "reserve reason lost");
+Check(Budget(100 * GiB, 80 * GiB, (long)(65 * GiB)).constructionFailureReason == "process_commit_share", "process ceiling reason lost");
+Check(Budget(0, 0, 1).constructionFailureReason == "counter_unavailable", "unknown counter reason lost");
+Check(LaunchFramePolicy.Resolve("background") == 30, "background mode incorrect");
+Check(LaunchFramePolicy.Resolve("foreground") == 90, "foreground mode incorrect");
+foreach (string mode in new[] { null, "", "BACKGROUND", "unknown" })
+    Check(LaunchFramePolicy.Resolve(mode) == null, "unspecified/invalid mode overwrote player setting");
 
 string fixture = Path.GetTempFileName();
 try
@@ -97,4 +104,31 @@ try
     Check(Send("GET http://example.com/echo HTTP/1.1\r\n\r\n").StartsWith("HTTP/1.1 400"), "non-local request target admitted");
 }
 finally { server.Stop(); }
+
+// 调度与Stop的真实同步门：仅尚未交付处理器的队列可以由关闭路径完成。
+var entered = new System.Threading.ManualResetEventSlim();
+var release = new System.Threading.ManualResetEventSlim();
+BridgeRequest queued = null;
+var stoppingServer = new HttpBridgeServer(0, req => { queued = req; entered.Set(); release.Wait(); });
+stoppingServer.Start();
+var dispatch = typeof(HttpBridgeServer).GetMethod("Dispatch", BindingFlags.Instance | BindingFlags.NonPublic);
+var pending = System.Threading.Tasks.Task.Run(() => (BridgeResponse)dispatch.Invoke(stoppingServer, new object[] { new BridgeRequest { Path = "/probe" } }));
+try
+{
+    Check(entered.Wait(3000), "dispatch did not reach queue boundary");
+    var stopping = System.Threading.Tasks.Task.Run(stoppingServer.Stop);
+    Check(!stopping.Wait(50), "Stop bypassed active enqueue ownership gate");
+    release.Set();
+    Check(stopping.Wait(3000), "Stop did not finish after enqueue completed");
+    queued.Complete(HttpBridgeServer.StoppedBeforeHandler(enqueued: true));
+    Check(pending.Wait(3000), "unhandled queued request did not receive shutdown result");
+    var beforeHandler = JObject.Parse(Encoding.UTF8.GetString(pending.Result.Body));
+    Check(beforeHandler["failurePhase"].Value<string>() == "before_handler" && beforeHandler["enqueued"].Value<bool>()
+        && !beforeHandler["handlerStarted"].Value<bool>() && !beforeHandler["mayHaveApplied"].Value<bool>(), "queued shutdown proof incorrect");
+    var rejected = (BridgeResponse)dispatch.Invoke(stoppingServer, new object[] { new BridgeRequest { Path = "/probe" } });
+    var prequeue = JObject.Parse(Encoding.UTF8.GetString(rejected.Body));
+    Check(prequeue["code"].Value<string>() == "bridge_stopped" && prequeue["failurePhase"].Value<string>() == "prequeue"
+        && !prequeue["enqueued"].Value<bool>() && !prequeue["safeToRetry"].Value<bool>(), "post-stop request was admitted or replay suggested");
+}
+finally { release.Set(); stoppingServer.Stop(); entered.Dispose(); release.Dispose(); }
 Console.WriteLine($"{checks} diagnostic checks passed; production sources linked; gameplay not emulated.");

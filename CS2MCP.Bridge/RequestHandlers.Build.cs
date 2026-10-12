@@ -330,9 +330,9 @@ namespace CS2MCP
             }
 
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
-            if (!tool.TryQueuePlacement(prefabEntity, prefab, position, rotation, request, attachedPoint))
+            if (!tool.TryQueuePlacement(prefabEntity, prefab, position, rotation, request, out error, attachedPoint))
             {
-                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+                return error;
             }
             // Completed asynchronously by BridgeToolSystem over the next tool frames.
             return null;

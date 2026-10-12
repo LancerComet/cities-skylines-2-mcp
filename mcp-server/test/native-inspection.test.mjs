@@ -24,7 +24,7 @@ test('utility ports and resource diagnostics preserve native values and use read
   const client=await connect(t,(req,res)=>{requests.push({url:req.url,method:req.method});
     res.end(JSON.stringify(req.url==='/ping'?{version}:payload));});
   const {tools}=await client.listTools();
-  assert.equal(tools.length,121);
+  assert.equal(tools.length,118);
   for(const name of ['cs2_utilities','cs2_outside_connections','cs2_resource_diagnostics'])
     assert.equal(tools.find(x=>x.name===name).annotations.readOnlyHint,true);
   for(const name of ['cs2_utilities','cs2_outside_connections']) {

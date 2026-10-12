@@ -68,9 +68,9 @@ The MCP server loads `mcp-server/.env` via [dotenv](https://github.com/motdotla/
 |---|---|---|---|
 | `CS2_BRIDGE_URL` | MCP server | `http://127.0.0.1:8642` | Address of the bridge mod |
 | `CS2MCP_PORT` | game process | `8642` | Bridge listen port (change both together) |
+| `CS2MCP_LAUNCH_MODE` | Game process | unset | Optional `background`/`foreground` launch preset (30/90 base FPS); unset preserves player settings, with no focus-based switching |
 | `CS2_PATH` | build time | auto-probed | Game install folder |
 | `CS2_GAME_USER_DATA` | MCP server | standard game user-data directory | Optional Skyve diagnostic source directory; read-only |
-| `CS2MCP_TOKEN` | MCP server | unset | Optional shared token for bridges that support HTTP authentication; this branch only implements the client header |
 
 ## Using with Claude
 
@@ -95,7 +95,7 @@ claude mcp add cs2 -- node <repo-path>\mcp-server\dist\index.js
 
 Start the game, load a save, then ask Claude: "How are my city's finances?", "Zone a residential area by the river", "Build a road connecting the industrial area to the highway".
 
-## Tool Reference (121 tools)
+## Tool Reference (118 tools)
 
 The tables below cover the original tools. The [complete tool catalog](docs/tool-reference.md)
 includes the additional facility, upgrade, terrain, resource, native road-layout and optional-mod tools.
@@ -206,3 +206,5 @@ failure recovery and optional-mod compatibility.
 ## License
 
 [Apache-2.0](LICENSE)
+
+[Explicit save contexts, single/batch control and optional monitoring](docs/city-control-cli.md)。

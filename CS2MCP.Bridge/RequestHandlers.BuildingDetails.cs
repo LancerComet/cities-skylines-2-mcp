@@ -95,9 +95,20 @@ namespace CS2MCP
                 if (EntityManager.HasBuffer<Game.Economy.Resources>(entity))
                     foreach (var resource in EntityManager.GetBuffer<Game.Economy.Resources>(entity, true))
                         inventory.Add(new { resource = resource.m_Resource.ToString(), amount = resource.m_Amount });
-                row["postal"] = new { operational = ModEntityComponents(entity, "Game.Buildings.Post"), inventory,
-                    note = "原生邮件分类库存与派送请求，保留原始单位；车辆所有权数量不等于正在投递" };
+                var post = EntityManager.GetComponentData<Game.Buildings.PostFacility>(entity);
+                var requests = new List<object>();
+                foreach (var target in new[] { post.m_MailDeliverRequest, post.m_MailReceiveRequest, post.m_TargetRequest })
+                    if (target != Entity.Null) requests.Add(DescribePostalRequest(target));
+                var fleet = new List<object>();
+                if (EntityManager.HasBuffer<Game.Vehicles.OwnedVehicle>(entity))
+                    foreach (var owned in EntityManager.GetBuffer<Game.Vehicles.OwnedVehicle>(entity, true))
+                        if (fleet.Count < 128 && EntityManager.Exists(owned.m_Vehicle)) fleet.Add(DescribeOperatingServiceVehicle(owned.m_Vehicle));
+                row["postal"] = new { operational = ModEntityComponents(entity, "Game.Buildings.Post"), inventory, requests, fleet,
+                    dispatch = ModEntityComponents(entity, "Game.Simulation.ServiceDispatch"),
+                    note = "原生邮件分类库存、服务请求／重试／寻路与实际车队，均只读、保留原始单位；车队及缓冲最多128项。车辆所有权不等于正在投递" };
             }
+            row["serviceDemand"] = new { mail = ModEntityComponents(entity, "Game.Buildings.MailProducer"), telecom = ModEntityComponents(entity, "Game.Buildings.TelecomConsumer"),
+                garbage = ModEntityComponents(entity, "Game.Buildings.GarbageProducer"), coverage = ModEntityComponents(entity, "Game.Buildings.ServiceCoverage") };
             var ports = new List<object>();
             var nodes = new HashSet<Entity>();
             if (EntityManager.HasBuffer<Game.Net.SubNet>(entity)) foreach (var subnet in EntityManager.GetBuffer<Game.Net.SubNet>(entity, true)) {
@@ -176,6 +187,25 @@ namespace CS2MCP
             return row;
         }
 
+        private object DescribePostalRequest(Entity entity)
+        {
+            bool exists = EntityManager.Exists(entity);
+            return new { entity = Ref(entity), exists, data = exists ? new { service = ModEntityComponents(entity, "Game.Simulation.ServiceRequest"),
+                transfer = ModEntityComponents(entity, "Game.Simulation.MailTransferRequest"), dispatched = ModEntityComponents(entity, "Game.Simulation.Dispatched"),
+                path = ModEntityComponents(entity, "Game.Pathfind.PathInformation"), pathOwner = ModEntityComponents(entity, "Game.Pathfind.PathOwner"),
+                pathElements = ModEntityComponents(entity, "Game.Pathfind.PathElement") } : null };
+        }
+
+        private object DescribeOperatingServiceVehicle(Entity entity)
+        {
+            return new { entity = Ref(entity), prefab = PrefabNameOf(entity), deleted = EntityManager.HasComponent<Game.Common.Deleted>(entity),
+                postVan = ModEntityComponents(entity, "Game.Vehicles.PostVan"), delivery = ModEntityComponents(entity, "Game.Vehicles.DeliveryTruck"),
+                publicTransport = ModEntityComponents(entity, "Game.Vehicles.PublicTransport"), cargoTransport = ModEntityComponents(entity, "Game.Vehicles.CargoTransport"),
+                layout = ModEntityComponents(entity, "Game.Vehicles.LayoutElement"), parked = ModEntityComponents(entity, "Game.Vehicles.Parked"),
+                lane = ModEntityComponents(entity, "Game.Vehicles.CarCurrentLane"), target = ModEntityComponents(entity, "Game.Common.Target"),
+                path = ModEntityComponents(entity, "Game.Pathfind.PathOwner"), position = ModEntityComponents(entity, "Game.Objects.Transform") };
+        }
+
         private BridgeResponse GetBuildingDetails(BridgeRequest request)
         {
             if (!ReadExistingEntity(request, out Entity entity, out BridgeResponse error)) return error;
@@ -200,12 +230,11 @@ namespace CS2MCP
                     var lockedEntity = parameters[i].m_LockedEntity;
                     rows.Add(new { factor = factor.ToString(), contribution, roundedContribution = rounded,
                         healthContribution = values.y, wellbeingContribution = values.z,
-                        suppressedByLockedService = lockedEntity != Entity.Null && locked.HasComponent(lockedEntity) && locked.IsComponentEnabled(lockedEntity),
-                        attention = rounded <= -2 });
+                        suppressedByLockedService = lockedEntity != Entity.Null && locked.HasComponent(lockedEntity) && locked.IsComponentEnabled(lockedEntity) });
                 }
             }
             return BridgeResponse.Json(new { capturedAtUtc = DateTime.UtcNow.ToString("o"), stalenessWarning = LockStalenessWarning,
-                factors = rows, note = "原生城市幸福提示同一计算；health与wellbeing分开，全城平均不证明每个片区健康。attention按用户显示值<=-2规则，不是游戏内置故障阈值。" });
+                factors = rows, note = "原生城市幸福提示同一计算；health与wellbeing分开，全城平均不证明每个片区健康。分项保留原生数值，不设置玩家自定义警报阈值。" });
         }
 
         private BridgeResponse SetEntityName(BridgeRequest request)
@@ -214,6 +243,8 @@ namespace CS2MCP
             if (!request.Query.TryGetValue("name", out string name) || string.IsNullOrWhiteSpace(name) || name.Length > 64) return BridgeResponse.Error(400, "name must contain 1..64 characters");
             if (EntityManager.HasComponent<Game.Net.Aggregated>(entity)) entity = EntityManager.GetComponentData<Game.Net.Aggregated>(entity).m_Aggregate;
             if (entity == Entity.Null || !EntityManager.Exists(entity)) return BridgeResponse.Error(409, "street aggregate is not ready");
+            if (EntityManager.HasComponent<Game.Areas.District>(entity))
+                return BridgeResponse.Error(400, "district renaming belongs to the district editing workflow");
             Entity target = entity;
             World.GetOrCreateSystemManaged<BridgeTransitRenameSystem>().Enqueue(target, name, request,
                 warning => BridgeResponse.Json(new { entity = Ref(target), requestedName = name, nameWarning = warning,

@@ -52,7 +52,7 @@ namespace CS2MCP
                     obj.allowLine, obj.allowCurve, obj.allowBrush, obj.allowAge, obj.distance, ageMask = obj.ageMask.ToString(),
                     bridge = "place_building + service upgrade + tree placement + standalone building native Relocate supported; object brush/stamp/line/curve modes not connected; MoveIt loading is not proof of its write API" },
                 areas = new { native = ToolSnapshot(area), modes = Enum.GetNames(typeof(AreaToolSystem.Mode)), area.allowGenerate,
-                    bridge = "district creation; extractor-areas: bounded building-owned area detail; extractor-area/edit: existing native editable extractor Lot only, locked entrance/radius/owner/cache preserved through native preview/apply; no standalone specialized/invisible area creation or editor Generate" },
+                    bridge = "baseline district creation; specialized industry placement/area editing and district rename/reshape/delete belong to separate contributions; editor Generate is not exposed" },
                 bulldoze = new { native = ToolSnapshot(bulldoze), modes = Enum.GetNames(typeof(BulldozeToolSystem.Mode)), bulldoze.underground,
                     bridge = "precise entity bulldoze supported via native owner pipeline; sub-element/everything selection is not blindly applied to an entire area" },
                 snapFlags = snaps,

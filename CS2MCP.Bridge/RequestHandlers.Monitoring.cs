@@ -20,6 +20,31 @@ namespace CS2MCP
         private double m_LastResourceTime;
         private int m_LastResourceFrame;
 
+        private int? LaunchFrameLimit()
+        {
+            return LaunchFramePolicy.Resolve(Environment.GetEnvironmentVariable(LaunchFramePolicy.EnvironmentName));
+        }
+
+        /// <summary>桥接创建即应用显式启动限帧，避免后台加载及等待接口期间继承前台90帧。</summary>
+        public void ApplyLaunchFrameLimit()
+        {
+            // 原生模式切换及加载会重置限帧；这里只改运行时两个参数，不重做整套画质/分辨率应用。
+            int? requested = LaunchFrameLimit();
+            if (!requested.HasValue) return;
+            int limit = requested.Value;
+            if (QualitySettings.vSyncCount != 0) QualitySettings.vSyncCount = 0;
+            if (Application.targetFrameRate != limit) Application.targetFrameRate = limit;
+            if (SharedSettings.instance?.graphics != null) SharedSettings.instance.graphics.vSync = false;
+        }
+
+        /// <summary>初始模式切换/加载期间维持本次启动限帧；就绪后允许显式运行时切换。</summary>
+        public void ReconcileLaunchFrameLimit()
+        {
+            var manager = Game.SceneFlow.GameManager.instance;
+            if (!m_FrameLimitRestored || manager != null && (manager.isGameLoading || manager.gameMode != Game.GameMode.Game))
+                ApplyLaunchFrameLimit();
+        }
+
         public void ResetRuntimeSettingsAfterLoad()
         {
             m_FrameLimitRestored = false;
@@ -60,7 +85,7 @@ namespace CS2MCP
             });
         }
 
-        /// <summary>只恢复本桥接接口明确保存的基础帧率上限，不改变画质或显卡驱动设置。</summary>
+        /// <summary>加载完成后重新应用本次启动预设；持久快照不决定下次普通启动。</summary>
         public void RestoreFrameLimit()
         {
             // 图形设置无需等待解锁重放或模拟推进；暂停加载也必须恢复限帧。
@@ -69,15 +94,21 @@ namespace CS2MCP
             if (m_FrameLimitRestored || !m_RuntimeSettingsLoadComplete || SharedSettings.instance?.graphics == null
                 || manager == null || manager.isGameLoading || manager.gameMode != Game.GameMode.Game) return;
             m_FrameLimitRestored = true;
+            // 明确模式优先；普通启动保留本地快照。IO失败不产生每帧重试。
             try {
-                if (File.Exists(FrameLimitPath) && int.TryParse(File.ReadAllText(FrameLimitPath), out int limit) && limit >= 10 && limit <= 240)
-                {
+                int? explicitLimit = LaunchFrameLimit();
+                if (explicitLimit.HasValue) {
+                    ApplyLaunchFrameLimit();
+                    Directory.CreateDirectory(Path.GetDirectoryName(FrameLimitPath));
+                    File.WriteAllText(FrameLimitPath, explicitLimit.Value.ToString());
+                } else if (File.Exists(FrameLimitPath) && int.TryParse(File.ReadAllText(FrameLimitPath), out int saved) && saved >= 10 && saved <= 240) {
                     SharedSettings.instance.graphics.vSync = false;
-                    SharedSettings.instance.graphics.ApplyAndSave();
-                    Application.targetFrameRate = limit;
+                    QualitySettings.vSyncCount = 0;
+                    Application.targetFrameRate = saved;
                 }
-            } catch (IOException e) { Mod.Log.Warn($"限帧配置读取失败，保留当前设置：{e.Message}"); }
-            catch (UnauthorizedAccessException e) { Mod.Log.Warn($"限帧配置无法读取，保留当前设置：{e.Message}"); }
+            }
+            catch (IOException e) { Mod.Log.Warn($"启动限帧已应用，但本地快照保存失败：{e.Message}"); }
+            catch (UnauthorizedAccessException e) { Mod.Log.Warn($"启动限帧已应用，但本地快照无法写入：{e.Message}"); }
         }
 
         private BridgeResponse GetGraphicsSettings()
@@ -89,6 +120,8 @@ namespace CS2MCP
                 performancePreference = SharedSettings.instance?.general.performancePreference.ToString(),
                 automaticSaveEnabled = SharedSettings.instance?.general.autoSave,
                 frameLimitRestoredForCurrentLoad = m_FrameLimitRestored,
+                launchMode = LaunchFrameLimit().HasValue ? Environment.GetEnvironmentVariable(LaunchFramePolicy.EnvironmentName) : null,
+                launchFrameLimit = LaunchFrameLimit(),
                 driverDisplayFps = (float?)null,
                 note = "base rendering limit only; driver frame-generation multiplier and post-generation FPS are not exposed by the game"
             });
@@ -105,10 +138,20 @@ namespace CS2MCP
             }
             int? requestedLimit = null;
             if (request.Query.TryGetValue("maxFps", out string raw)) {
-                // Unity 的基础渲染限帧独立于模拟倍速；后台允许低于30帧，仍禁止0及无限帧率值。
+                // 接口允许范围独立于30/90启动预设；仍禁止0及无限帧率值。
                 if (!int.TryParse(raw, out int limit) || limit < 10 || limit > 240)
                     return BridgeResponse.Error(400, "maxFps must be an integer from 10 to 240");
                 requestedLimit = limit;
+            }
+            string requestedMode = null;
+            if (request.Query.TryGetValue("launchMode", out string mode)) {
+                if (mode != "background" && mode != "foreground")
+                    return BridgeResponse.Error(400, "launchMode must be background or foreground");
+                int modeLimit = LaunchFramePolicy.Resolve(mode).Value;
+                if (requestedLimit.HasValue && requestedLimit.Value != modeLimit)
+                    return BridgeResponse.Error(400, "maxFps conflicts with the explicit launchMode preset");
+                requestedMode = mode;
+                requestedLimit = modeLimit;
             }
             if (requestedLimit.HasValue && (requestedVSync ?? SharedSettings.instance.graphics.vSync))
                 return BridgeResponse.Error(400, "maxFps requires vSync=false; Unity ignores the rendering limit while vertical sync is active");
@@ -118,10 +161,16 @@ namespace CS2MCP
                 File.WriteAllText(FrameLimitPath, requestedLimit.Value.ToString());
             }
             if (requestedVSync.HasValue) {
-                SharedSettings.instance.graphics.vSync = requestedVSync.Value;
-                SharedSettings.instance.graphics.ApplyAndSave();
+                // FPS/模式切换常重复传false；相同值不再触发分辨率、整套画质和SettingsApplied回调。
+                if (SharedSettings.instance.graphics.vSync != requestedVSync.Value) {
+                    SharedSettings.instance.graphics.vSync = requestedVSync.Value;
+                    SharedSettings.instance.graphics.ApplyAndSave();
+                }
+                QualitySettings.vSyncCount = requestedVSync.Value ? 1 : 0;
             }
             if (requestedLimit.HasValue) Application.targetFrameRate = requestedLimit.Value;
+            if (requestedMode != null)
+                Environment.SetEnvironmentVariable(LaunchFramePolicy.EnvironmentName, requestedMode, EnvironmentVariableTarget.Process);
             return GetGraphicsSettings();
         }
 

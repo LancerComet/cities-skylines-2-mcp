@@ -105,7 +105,7 @@ namespace CS2MCP
             var position = new float3(x, 0, z);
             position.y = TerrainUtils.SampleHeight(ref terrain, position) + elevation;
             if (!World.GetExistingSystemManaged<BridgeToolSystem>().TryQueuePlacement(entity, prefab, position,
-                quaternion.RotateY(math.radians(rotation)), request)) return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+                quaternion.RotateY(math.radians(rotation)), request, out error)) return error;
             return null;
         }
 

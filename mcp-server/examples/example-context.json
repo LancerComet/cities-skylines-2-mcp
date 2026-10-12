@@ -1,0 +1,8 @@
+{
+  "cityId": "example-city",
+  "cityName": "Example City",
+  "manualSaveName": "Example City Main",
+  "manualSavePath": "./saves/example.cok",
+  "journalDirectory": "./records/example-city",
+  "loadedSaveGuid": "11111111111111111111111111111111"
+}
