@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using Colossal.Mathematics;
 using Game.Prefabs;
 using Game.Simulation;
 using Unity.Collections;
@@ -224,8 +225,11 @@ namespace CS2MCP
                 case "tree":
                     query = TreePrefabQuery;
                     break;
+                case "asset":
+                    query = AssetStampPrefabQuery;
+                    break;
                 default:
-                    return BridgeResponse.Error(400, "category must be 'building', 'road', 'net' (all networks incl. pipes/power/tracks/paths) or 'tree'");
+                    return BridgeResponse.Error(400, "category must be building, road, net, tree or asset (native composite AssetStamp)");
             }
 
             request.Query.TryGetValue("query", out string search);
@@ -279,15 +283,21 @@ namespace CS2MCP
                 return error;
             }
 
+            if (request.Query.ContainsKey("dryRun") && !request.TryGetBool("dryRun", out _))
+                return BridgeResponse.Error(400, "dryRun must be true or false; no placement queued");
+
             if (!request.Query.TryGetValue("prefab", out string prefabName) || string.IsNullOrEmpty(prefabName))
             {
                 return BridgeResponse.Error(400, "provide ?prefab=<name from /prefabs>");
             }
-            if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z))
+            if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z)
+                || !math.isfinite(x) || !math.isfinite(z) || math.abs(x) > kWorldHalfSize || math.abs(z) > kWorldHalfSize)
             {
                 return BridgeResponse.Error(400, "provide ?x=<float>&z=<float> world coordinates");
             }
-            request.TryGetFloat("rotation", out float rotationDegrees);
+            float rotationDegrees = 0;
+            if (request.Query.ContainsKey("rotation") && (!request.TryGetFloat("rotation", out rotationDegrees) || !math.isfinite(rotationDegrees)))
+                return BridgeResponse.Error(400, "rotation must be finite; no placement queued");
 
             if (!TryFindPrefabByName(BuildingPrefabQuery, prefabName, out Entity prefabEntity, out PrefabBase prefab)
                 && !TryFindPrefabByName(TreePrefabQuery, prefabName, out prefabEntity, out prefab))
@@ -296,7 +306,7 @@ namespace CS2MCP
             }
             if (IsLocked(prefabEntity) && !IsForced(request))
             {
-                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached); pass force=true to place anyway");
+                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked; reach its native milestone/development prerequisites before placing");
             }
 
             float3 position = new float3(x, 0f, z);
@@ -312,13 +322,54 @@ namespace CS2MCP
             }
             quaternion rotation = quaternion.RotateY(math.radians(rotationDegrees));
 
-            BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
-            if (!tool.TryQueuePlacement(prefabEntity, prefab, position, rotation, request))
+            if (!TryResolveRoadAttachedBuilding(prefabEntity, position, out Game.Tools.ControlPoint attachedPoint, out error)) return error;
+            if (attachedPoint.m_OriginalEntity != Entity.Null)
             {
-                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+                position = attachedPoint.m_Position;
+                rotation = attachedPoint.m_Rotation;
+            }
+
+            BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
+            if (!tool.TryQueuePlacement(prefabEntity, prefab, position, rotation, request, out error, attachedPoint))
+            {
+                return error;
             }
             // Completed asynchronously by BridgeToolSystem over the next tool frames.
             return null;
+        }
+
+        /// <summary>对应原生 ObjectTool 的道路中心线吸附分支；普通路边建筑不进入此流程，所有碰撞和道路规格仍由原生预览验证。</summary>
+        private bool TryResolveRoadAttachedBuilding(Entity prefab, float3 wanted, out Game.Tools.ControlPoint point, out BridgeResponse error)
+        {
+            point = default;
+            error = null;
+            if (!EntityManager.HasComponent<BuildingData>(prefab) || !EntityManager.HasComponent<PlaceableObjectData>(prefab)) return true;
+            var building = EntityManager.GetComponentData<BuildingData>(prefab);
+            var placement = EntityManager.GetComponentData<PlaceableObjectData>(prefab);
+            if ((building.m_Flags & BuildingFlags.CanBeOnRoad) == 0
+                || (building.m_Flags & BuildingFlags.CanBeOnRoadArea) != 0
+                || (placement.m_Flags & Game.Objects.PlacementFlags.NetObject) == 0
+                || (placement.m_Flags & Game.Objects.PlacementFlags.RoadEdge) == 0) return true;
+            float bestDistance = 12f;
+            using (var roads = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
+                foreach (var road in roads)
+                {
+                    if (!EntityManager.HasComponent<Game.Net.Road>(road)) continue;
+                    var curve = EntityManager.GetComponentData<Game.Net.Curve>(road).m_Bezier;
+                    float distance = MathUtils.Distance(curve.xz, wanted.xz, out float t);
+                    if (distance >= bestDistance || t <= .05f || t >= .95f) continue;
+                    float3 position = MathUtils.Position(curve, t);
+                    if (math.abs(position.y - wanted.y) > 3f) continue;
+                    float2 direction = MathUtils.Left(math.normalizesafe(MathUtils.Tangent(curve, t).xz));
+                    if (math.dot(position.xz - wanted.xz, direction) < 0f) direction = -direction;
+                    bestDistance = distance;
+                    point = new Game.Tools.ControlPoint { m_Position = position, m_HitPosition = wanted,
+                        m_Direction = direction, m_Rotation = Game.Tools.ToolUtils.CalculateRotation(direction),
+                        m_CurvePosition = t, m_OriginalEntity = road, m_ElementIndex = new int2(-1, -1) };
+                }
+            if (point.m_OriginalEntity != Entity.Null) return true;
+            error = BridgeResponse.Error(409, "road-attached building requires a nearby same-level road segment away from its junction; no placement applied");
+            return false;
         }
 
         private BridgeResponse BuildRoad(BridgeRequest request)
@@ -354,7 +405,7 @@ namespace CS2MCP
             }
             if (IsLocked(prefabEntity) && !IsForced(request))
             {
-                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached); pass force=true to build anyway");
+                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked; reach its native milestone/development prerequisites before building");
             }
 
             TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
@@ -374,7 +425,11 @@ namespace CS2MCP
 
             request.TryGetFloat("e1", out float e1);
             request.TryGetFloat("e2", out float e2);
-            var elevations = new float2(math.clamp(e1, -30f, 60f), math.clamp(e2, -30f, 60f));
+            foreach (string key in new[] { "e1", "e2", "rotation", "cx", "cz" })
+                if (request.Query.ContainsKey(key) && !request.TryGetFloat(key, out _)) return BridgeResponse.Error(400, $"{key} must be finite");
+            if (e1 < -30 || e1 > 60 || e2 < -30 || e2 > 60) return BridgeResponse.Error(400, "elevation outside bridge operation range -30..60m");
+            if (!CheckNetElevation(prefabEntity, e1, out error) || !CheckNetElevation(prefabEntity, e2, out error)) return error;
+            var elevations = new float2(e1, e2);
 
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
             if (!tool.TryQueueRoad(prefabEntity, prefab, start, end, mid, hasMid, elevations, request))
@@ -420,7 +475,13 @@ namespace CS2MCP
             }
 
             string side = request.Query.TryGetValue("side", out string rawSide) ? rawSide.ToLowerInvariant() : "both";
+            if (side != "left" && side != "right" && side != "both") return BridgeResponse.Error(400, "side must be left|right|both");
             Game.Prefabs.CompositionFlags flags = default;
+            if (EntityManager.HasComponent<Game.Net.Upgraded>(entity)) {
+                // 美化接口是增添操作；必须保留公交/自行车专道、过街、桥隧结构和另一侧既有服务。
+                // 清除某项服务使用对应原生服务工具，不以添加树木隐式重置整个横断面。
+                flags = EntityManager.GetComponentData<Game.Net.Upgraded>(entity).m_Flags;
+            }
             foreach (string name in upgradesRaw.Split(','))
             {
                 string trimmed = name.Trim();
@@ -531,9 +592,12 @@ namespace CS2MCP
             bool isFlora = EntityManager.HasComponent<Game.Objects.Tree>(entity)
                 || EntityManager.HasComponent<Game.Objects.Plant>(entity);
             bool isDistrict = EntityManager.HasComponent<Game.Areas.District>(entity);
-            if (!isBuilding && !isNetEdge && !isFlora && !isDistrict)
+            bool isTransitStop = EntityManager.HasComponent<Game.Routes.TransportStop>(entity)
+                && EntityManager.HasComponent<Game.Objects.Transform>(entity)
+                && !EntityManager.HasComponent<Game.Common.Owner>(entity);
+            if (!isBuilding && !isNetEdge && !isFlora && !isDistrict && !isTransitStop)
             {
-                return BridgeResponse.Error(400, "entity is not a building, road segment, tree/plant or district; refusing to delete");
+                return BridgeResponse.Error(400, "entity is not a building, road segment, tree/plant, district or standalone transit stop; refusing to delete");
             }
             if (EntityManager.HasComponent<Game.Common.Deleted>(entity))
             {

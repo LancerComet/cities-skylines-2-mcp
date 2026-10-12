@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <Compile Include="../../CS2MCP.Bridge/BridgeRequest.cs" Link="BridgeRequest.cs" />
+    <Compile Include="../../CS2MCP.Bridge/HttpBridgeServer.cs" Link="HttpBridgeServer.cs" />
+    <Compile Include="../../CS2MCP.Bridge/RuntimeMemory.cs" Link="RuntimeMemory.cs" />
+    <Compile Include="../../CS2MCP.Bridge/SignalUiLimits.cs" Link="SignalUiLimits.cs" />
+    <Compile Include="../../CS2MCP.Bridge/LaunchFramePolicy.cs" Link="LaunchFramePolicy.cs" />
+  </ItemGroup>
+</Project>

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Game.Policies;
 using Game.Prefabs;
@@ -85,6 +85,7 @@ namespace CS2MCP
                         active,
                         adjustment,
                         hasSlider = EntityManager.HasComponent<PolicySliderData>(entity),
+                        slider = PolicySlider(entity),
                         locked = IsLocked(entity),
                     });
                 }
@@ -100,7 +101,7 @@ namespace CS2MCP
 
         private BridgeResponse HandleSetPolicy(BridgeRequest request)
         {
-            if (!TryGetCity(out _, out BridgeResponse error))
+            if (!TryGetCity(out Entity city, out BridgeResponse error))
             {
                 return error;
             }
@@ -113,7 +114,6 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(400, "provide ?active=true|false");
             }
-            request.TryGetFloat("adjustment", out float adjustment);
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             using (NativeArray<Entity> entities = CityPolicyQuery.ToEntityArray(Allocator.Temp))
@@ -130,6 +130,7 @@ namespace CS2MCP
                         return BridgeResponse.Error(409, $"policy '{prefab.name}' is locked (milestone not reached)");
                     }
 
+                    if (!TryPolicyAdjustment(request, city, entity, out float adjustment, out error)) return error;
                     World.GetOrCreateSystemManaged<PoliciesUISystem>().SetCityPolicy(entity, active, adjustment);
                     return BridgeResponse.Json(new
                     {
@@ -142,6 +143,34 @@ namespace CS2MCP
             }
 
             return BridgeResponse.Error(404, $"unknown policy '{policyName}'; list names via /city/policies");
+        }
+
+        // 原生 SetPolicy 只入队，不能代替界面滑块的上限校验；省略数值时保留现值或原生默认值。
+        private object PolicySlider(Entity policy)
+        {
+            if (!EntityManager.HasComponent<PolicySliderData>(policy)) return null;
+            var data = EntityManager.GetComponentData<PolicySliderData>(policy);
+            return new { min = data.m_Range.min, max = data.m_Range.max, defaultValue = data.m_Default, step = data.m_Step };
+        }
+
+        private bool TryPolicyAdjustment(BridgeRequest request, Entity target, Entity policy, out float adjustment, out BridgeResponse error)
+        {
+            adjustment = 0; error = null;
+            bool provided = request.Query.ContainsKey("adjustment");
+            if (provided && (!request.TryGetFloat("adjustment", out adjustment) || float.IsNaN(adjustment) || float.IsInfinity(adjustment))) {
+                error = BridgeResponse.Error(400, "adjustment must be finite"); return false;
+            }
+            if (!EntityManager.HasComponent<PolicySliderData>(policy)) return true;
+            var data = EntityManager.GetComponentData<PolicySliderData>(policy);
+            if (!provided) {
+                adjustment = data.m_Default;
+                if (EntityManager.HasBuffer<Policy>(target)) foreach (var item in EntityManager.GetBuffer<Policy>(target, true))
+                    if (item.m_Policy == policy) { adjustment = item.m_Adjustment; break; }
+            }
+            if (float.IsNaN(adjustment) || float.IsInfinity(adjustment) || adjustment < data.m_Range.min || adjustment > data.m_Range.max) {
+                error = BridgeResponse.Error(400, $"adjustment must be within native range {data.m_Range.min}..{data.m_Range.max}"); return false;
+            }
+            return true;
         }
     }
 }

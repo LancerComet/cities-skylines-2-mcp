@@ -115,7 +115,7 @@ namespace CS2MCP
             if (request.TryGetBool("cancel", out bool cancel) && cancel)
             {
                 m_System.SetAutoPause(0);
-                sim.selectedSpeed = 0f;
+                PauseNativeSimulation();
                 return BridgeResponse.Json(new { cancelled = true, paused = true });
             }
 
@@ -123,12 +123,16 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(400, "provide ?hours=<in-game hours 0.1-96> (or ?cancel=true)");
             }
-            hours = math.clamp(hours, 0.1f, 96f);
-            float speed = request.TryGetFloat("speed", out float rawSpeed) ? math.clamp(rawSpeed, 0.5f, 8f) : 4f;
+            if (!math.isfinite(hours) || hours < 0.1f || hours > 96f) return BridgeResponse.Error(400, "hours must be finite and 0.1..96");
+            float speed = 4f;
+            if (request.Query.ContainsKey("speed") && (!request.TryGetFloat("speed", out speed) || (speed != 1 && speed != 2 && speed != 4)))
+                return BridgeResponse.Error(400, "running speed must be native 1x/2x/4x");
 
             uint targetFrame = sim.frameIndex + (uint)(hours * kFramesPerHour);
+            if (!ReadClockGate(out var clockUI, out _, out _)) return BridgeResponse.Error(409, "native time UI controls or pause gate are unavailable");
             m_System.SetAutoPause(targetFrame);
-            sim.selectedSpeed = speed;
+            m_RequestedSimulationSpeed = speed;
+            SetNativeClock(clockUI, speed);
 
             return BridgeResponse.Json(new
             {
@@ -156,19 +160,13 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(503, "menu system unavailable");
             }
-            var saveInfo = menu.GetSaveInfo(autoSave: false);
-            // The save pipeline requires a preview texture (null crashes it) —
-            // capture one exactly like AutoSaveSystem does.
-            UnityEngine.RenderTexture preview = Game.UI.ScreenCaptureHelper.CreateRenderTarget("PreviewSaveGame-CS2MCP", 680, 383);
-            Game.UI.ScreenCaptureHelper.CaptureScreenshot(UnityEngine.Camera.main, preview, new MenuHelpers.SaveGamePreviewSettings());
-            _ = GameManager.instance.Save(name, saveInfo, Colossal.IO.AssetDatabase.AssetDatabase.user, preview);
-
-            return BridgeResponse.Json(new
-            {
-                saving = true,
-                name,
-                note = "save runs asynchronously; it appears in the game's load menu when finished",
-            });
+            bool includePreview = true;
+            if (request.Query.ContainsKey("includePreview") && !request.TryGetBool("includePreview", out includePreview))
+                return BridgeResponse.Error(400, "includePreview must be true or false");
+            // 前台只读取游戏现有帧；后台显式省略预览，均不额外渲染相机。
+            // 异步管线结束仍需调用方核验主档时间、完整性与备份，不把Task返回值当落盘成功。
+            ScreenshotRunner.Ensure().Save(request, name, includePreview);
+            return null;
         }
 
         private BridgeResponse GetTilesInfo()
@@ -234,6 +232,8 @@ namespace CS2MCP
                         entity = new { index = entity.Index, version = entity.Version },
                         center = new { x = geometry.m_CenterPosition.x, z = geometry.m_CenterPosition.z },
                         polygonNodes = nodeCount,
+                        complete = EntityManager.HasComponent<Game.Areas.Area>(entity) &&
+                            (EntityManager.GetComponentData<Game.Areas.Area>(entity).m_Flags & Game.Areas.AreaFlags.Complete) != 0,
                         activePolicies,
                     });
                 }
@@ -356,6 +356,7 @@ namespace CS2MCP
                         title,
                         active = isActive,
                         adjustment,
+                        slider = PolicySlider(entity),
                         locked = IsLocked(entity),
                     });
                 }
@@ -385,7 +386,6 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(400, "provide ?active=true|false");
             }
-            request.TryGetFloat("adjustment", out float adjustment);
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             using (NativeArray<Entity> entities = DistrictPolicyQuery.ToEntityArray(Allocator.Temp))
@@ -401,6 +401,7 @@ namespace CS2MCP
                     {
                         return BridgeResponse.Error(409, $"policy '{prefab.name}' is locked (milestone not reached)");
                     }
+                    if (!TryPolicyAdjustment(request, district, entity, out float adjustment, out error)) return error;
                     World.GetOrCreateSystemManaged<PoliciesUISystem>().SetPolicy(district, entity, active, adjustment);
                     return BridgeResponse.Json(new
                     {

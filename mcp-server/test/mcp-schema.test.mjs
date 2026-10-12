@@ -1,0 +1,127 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {Client} from '@modelcontextprotocol/sdk/client/index.js';
+import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
+import {fileURLToPath} from 'node:url';
+import {dirname,resolve} from 'node:path';
+import {createServer} from 'node:http';
+import {readFile} from 'node:fs/promises';
+
+test('fresh MCP handshake is clean and exposes readonly Skyve plus safe force and lane paging',async t=>{
+  const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+  const client=new Client({name:'schema-test',version:'1'});
+  const transport=new StdioClientTransport({command:process.execPath,args:[resolve(root,'dist/index.js')],cwd:root,stderr:'pipe'});
+  t.after(()=>client.close());
+  await client.connect(transport);
+  assert.equal(client.getServerVersion().version,JSON.parse(await readFile(resolve(root,'package.json'),'utf8')).version);
+  const {tools}=await client.listTools();
+  assert.equal(tools.find(t=>t.name==='cs2_skyve_status').annotations.readOnlyHint,true);
+  for(const name of ['cs2_mod_catalog','cs2_mod_inspect','cs2_mod_operation','cs2_mod_assets']) assert.equal(tools.find(t=>t.name===name).annotations.readOnlyHint,true);
+  for(const name of ['cs2_mod_action','cs2_place_prop','cs2_anarchy_helpers','cs2_anarchy_refresh_props']) assert.equal(tools.find(t=>t.name===name).annotations.readOnlyHint,false);
+  const modActions=tools.find(t=>t.name==='cs2_mod_action').inputSchema.properties.action.enum;
+  for(const action of ['traffic.prepareConnection','traffic.previewConnection','traffic.preparePriority','traffic.previewPriority','traffic.apply','traffic.cancel','signals.initialize','signals.setLaneMask']) assert.ok(modActions.includes(action));
+  assert.equal(tools.find(t=>t.name==='cs2_place_prop').inputSchema.properties.dryRun.default,true);
+  assert.equal(tools.find(t=>t.name==='cs2_place_interchange').inputSchema.properties.dryRun.default,true);
+  assert.equal(tools.find(t=>t.name==='cs2_interchange_info').annotations.readOnlyHint,true);
+  assert.ok(tools.find(t=>t.name==='cs2_find_prefabs').inputSchema.properties.category.enum.includes('asset'));
+  for (const name of ['cs2_production','cs2_natural_resources','cs2_extractor_areas','cs2_edit_extractor_area']) assert.equal(tools.some(t=>t.name===name),false);
+  assert.equal(tools.find(t=>t.name==='cs2_road_upgrades').annotations.readOnlyHint,true);
+  assert.equal(tools.find(t=>t.name==='cs2_pedestrians').annotations.readOnlyHint,true);
+  assert.equal(tools.find(t=>t.name==='cs2_pedestrians').inputSchema.properties.limit.maximum,100);
+  const lane=tools.find(t=>t.name==='cs2_apply_lane_upgrade').inputSchema;
+  assert.deepEqual(lane.required,['index','version','prefab']);
+  assert.ok(lane.properties.invert); assert.ok(lane.properties.remove); assert.ok(lane.properties.dryRun);
+  assert.equal(lane.properties.force,undefined);
+  const turns=tools.find(t=>t.name==='cs2_set_turn_restrictions').inputSchema;
+  assert.deepEqual(turns.required,['road','node','forbidLeft','forbidRight','forbidStraight']);
+  assert.equal(tools.find(t=>t.name==='cs2_set_fee').inputSchema.properties.fee.minimum,0);
+  assert.deepEqual(Object.keys(tools.find(t=>t.name==='cs2_anarchy_normal_construction').inputSchema.properties),[]);
+  const taxes=tools.find(t=>t.name==='cs2_set_tax').inputSchema.properties;
+  assert.equal(taxes.educationLevel.maximum,4); assert.ok(taxes.resource);
+  const inspect=tools.find(t=>t.name==='cs2_inspect');assert.ok(inspect.inputSchema.properties.laneLimit);
+  const forced=tools.filter(t=>t.inputSchema.properties?.force);assert.equal(forced.length,10);
+  for(const tool of forced) assert.equal(tool.inputSchema.properties.force.const,false);
+  for(const args of [{area:'Industrial',rate:10,resource:'Food'},{area:'Residential',rate:10,resource:'Food'},{area:'Office',rate:10,educationLevel:1},{area:'Residential',rate:10,educationLevel:1,resource:'Food'}]) {
+    const result=await client.callTool({name:'cs2_set_tax',arguments:args});
+    assert.equal(result.isError,true); assert.equal(JSON.parse(result.content[0].text).mayHaveApplied,false);
+  }
+});
+
+test('mod mutations refuse older bridges and preserve Chinese structured payloads',async t=>{
+  let version='0.4.0';const requests=[];
+  const mock=createServer((req,res)=>{requests.push(req.url);res.setHeader('Content-Type','application/json');res.end(JSON.stringify(req.url==='/ping'?{version}:{ok:true}));});
+  await new Promise(resolve=>mock.listen(0,'127.0.0.1',resolve));t.after(()=>{mock.closeAllConnections();mock.close();});
+  const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');const client=new Client({name:'mod-test',version:'1'});
+  const transport=new StdioClientTransport({command:process.execPath,args:[resolve(root,'dist/index.js')],cwd:root,env:{...process.env,CS2_BRIDGE_URL:`http://127.0.0.1:${mock.address().port}`},stderr:'pipe'});
+  t.after(()=>client.close());await client.connect(transport);
+  const args={action:'signals.setName',payload:{entity:{index:23,version:1},name:'测试 + 路口',dryRun:true}};
+  let result=await client.callTool({name:'cs2_mod_action',arguments:args});assert.equal(result.isError,true);assert.deepEqual(requests,['/ping']);
+  version='0.10.2';requests.length=0;result=await client.callTool({name:'cs2_mod_action',arguments:args});assert.notEqual(result.isError,true);
+  let url=new URL(requests.at(-1),'http://localhost');assert.equal(url.pathname,'/build/mod/action');assert.deepEqual(JSON.parse(url.searchParams.get('payload')),args.payload);
+  version='0.4.0';requests.length=0;result=await client.callTool({name:'cs2_place_prop',arguments:{prefab:'正常道具',x:10,z:20}});assert.equal(result.isError,true);assert.deepEqual(requests,['/ping']);
+  version='0.10.2';requests.length=0;result=await client.callTool({name:'cs2_place_prop',arguments:{prefab:'正常道具',x:10,z:20}});assert.notEqual(result.isError,true);
+  url=new URL(requests.at(-1),'http://localhost');assert.equal(url.searchParams.get('dryRun'),'true');assert.equal(url.searchParams.has('force'),false);
+  requests.length=0;result=await client.callTool({name:'cs2_mod_inspect',arguments:{mod:'Traffic',entity:{index:23}}});assert.equal(result.isError,true);assert.deepEqual(requests,[]);
+});
+
+test('native camera, road structure and building relocation preserve prerequisite gates',async t=>{
+  let version='0.10.2'; const requests=[];
+  const mock=createServer((req,res)=>{
+    requests.push(req.url);
+    res.setHeader('Content-Type','application/json');
+    res.end(JSON.stringify(req.url==='/ping'?{version}:{ok:true}));
+  });
+  await new Promise(resolve=>mock.listen(0,'127.0.0.1',resolve));
+  t.after(()=>{mock.closeAllConnections();mock.close();});
+  const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+  const client=new Client({name:'native-prerequisites-test',version:'1'});
+  const transport=new StdioClientTransport({command:process.execPath,args:[resolve(root,'dist/index.js')],cwd:root,
+    env:{...process.env,CS2_BRIDGE_URL:`http://127.0.0.1:${mock.address().port}`},stderr:'pipe'});
+  t.after(()=>client.close()); await client.connect(transport);
+  version='0.4.0';requests.length=0;
+  let cameraResult=await client.callTool({name:'cs2_set_camera',arguments:{x:400,z:-590,edgeScrolling:false}});
+  assert.equal(cameraResult.isError,true);assert.deepEqual(requests,['/ping']);
+  version='0.10.2';requests.length=0;
+  cameraResult=await client.callTool({name:'cs2_set_camera',arguments:{x:400,z:-590,edgeScrolling:false}});
+  assert.notEqual(cameraResult.isError,true);
+  const cameraUrl=new URL(requests.at(-1),'http://localhost');
+  assert.equal(cameraUrl.pathname,'/camera/set');assert.equal(cameraUrl.searchParams.get('edgeScrolling'),'false');
+  assert.equal(cameraUrl.searchParams.get('x'),'400');assert.equal(cameraUrl.searchParams.get('z'),'-590');
+  version='0.4.0';requests.length=0;
+  let crossing=await client.callTool({name:'cs2_apply_road_service',arguments:{index:123,version:1,prefab:'Crosswalk',remove:true,dryRun:true}});
+  assert.equal(crossing.isError,true);assert.deepEqual(requests,[]);
+  version='0.10.2';requests.length=0;
+  crossing=await client.callTool({name:'cs2_apply_road_service',arguments:{index:123,version:1,prefab:'Crosswalk',remove:true,invert:true,dryRun:true}});
+  assert.equal(crossing.isError,true);assert.deepEqual(requests,[]);
+  crossing=await client.callTool({name:'cs2_apply_road_service',arguments:{index:123,version:1,prefab:'RetainingWall01',remove:true,invert:true,dryRun:true}});
+  assert.notEqual(crossing.isError,true);
+  const crossingUrl=new URL(requests.at(-1),'http://localhost');
+  assert.equal(crossingUrl.pathname,'/build/road-service');assert.equal(crossingUrl.searchParams.get('remove'),'true');
+  assert.equal(crossingUrl.searchParams.get('invert'),'true');assert.equal(crossingUrl.searchParams.get('dryRun'),'true');
+  version='0.10.2';
+  let result, url;
+  // 新结构参数不得被旧桥接静默忽略后施工成另一种道路。
+  const groundArgs={prefab:'Alley Oneway - Double Sided Parking',x1:10,z1:10,x2:90,z2:10,e1:-7.5,e2:-7.5,composition:'ground',constantSlope:true};
+  version='0.4.0';requests.length=0;
+  result=await client.callTool({name:'cs2_connect_road',arguments:groundArgs});
+  assert.equal(result.isError,true);assert.deepEqual(requests,['/ping']);
+  requests.length=0;
+  result=await client.callTool({name:'cs2_apply_road_service',arguments:{index:123,version:1,prefab:'RetainingWall01'}});
+  assert.equal(result.isError,true);assert.deepEqual(requests,['/ping']);
+  version='0.10.2';requests.length=0;
+  result=await client.callTool({name:'cs2_connect_road',arguments:{...groundArgs,dryRun:true}});
+  assert.notEqual(result.isError,true);
+  url=new URL(requests.at(-1),'http://localhost');
+  assert.equal(url.pathname,'/build/road/connect');assert.equal(url.searchParams.get('composition'),'ground');
+  assert.equal(url.searchParams.get('constantSlope'),'true');assert.equal(url.searchParams.get('dryRun'),'true');
+  version='0.4.0';requests.length=0;
+  result=await client.callTool({name:'cs2_move_building',arguments:{index:123,version:1,x:80,z:90,rotation:180}});
+  assert.equal(result.isError,true);assert.deepEqual(requests,['/ping']);
+  version='0.10.2';requests.length=0;
+  result=await client.callTool({name:'cs2_move_building',arguments:{index:123,version:1,x:80,z:90,rotation:180,dryRun:true}});
+  assert.notEqual(result.isError,true);
+  url=new URL(requests.at(-1),'http://localhost');
+  assert.equal(url.pathname,'/build/building/move');assert.equal(url.searchParams.get('index'),'123');
+  assert.equal(url.searchParams.get('rotation'),'180');assert.equal(url.searchParams.get('dryRun'),'true');
+  assert.equal(url.searchParams.has('force'),false);
+});

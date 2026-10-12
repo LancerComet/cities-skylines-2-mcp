@@ -47,6 +47,7 @@ namespace CS2MCP
             base.OnCreate();
             Instance = this;
             m_Handlers = new RequestHandlers(this);
+            m_Handlers.ApplyLaunchFrameLimit();
             m_SimulationSystem = base.World.GetOrCreateSystemManaged<SimulationSystem>();
 
             int port = DefaultPort;
@@ -75,18 +76,26 @@ namespace CS2MCP
             base.OnGameLoadingComplete(purpose, mode);
             m_FrameIndexAtLoad = m_SimulationSystem.frameIndex;
             SimulationHasTickedSinceLoad = false;
+            AutoPauseTargetFrame = 0;
+            m_Handlers.ResetBackgroundSimulation();
+            m_Handlers.ResetRuntimeSettingsAfterLoad();
         }
 
         [Preserve]
         protected override void OnUpdate()
         {
+            // 工具还未开始运行就被UI替换时，不会收到OnStopRunning；UI阶段也核一次所有权。
+            World.GetExistingSystemManaged<BridgeToolSystem>()?.ReconcileToolOwnership();
+            m_Handlers.ReconcileLaunchFrameLimit();
+            m_Handlers.RestoreFrameLimit();
+            m_Handlers.ReconcileBackgroundSimulation();
             if (!SimulationHasTickedSinceLoad && m_SimulationSystem.frameIndex != m_FrameIndexAtLoad)
             {
                 SimulationHasTickedSinceLoad = true;
             }
             if (AutoPauseTargetFrame != 0 && m_SimulationSystem.frameIndex >= AutoPauseTargetFrame)
             {
-                m_SimulationSystem.selectedSpeed = 0f;
+                m_Handlers.PauseNativeSimulation();
                 AutoPauseTargetFrame = 0;
                 Mod.Log.Info("timed run finished, simulation auto-paused");
             }
@@ -115,6 +124,10 @@ namespace CS2MCP
         {
             m_Server?.Stop();
             m_Server = null;
+            // Stop已关闭唯一入队入口；只完成仍在队列且未交付处理器的请求。
+            // 已出队的工具/保存等异步操作保留各自的结果所有权。
+            while (m_Pending.TryDequeue(out BridgeRequest request))
+                request.Complete(HttpBridgeServer.StoppedBeforeHandler(enqueued: true));
         }
 
         [Preserve]

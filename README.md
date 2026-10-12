@@ -31,8 +31,11 @@ Cities: Skylines II
 ## Build & Install
 
 ```powershell
-# 1. Build the in-game mod (auto-deploys to the game's local Mods folder)
+# 1. Build the in-game mod (build only; does not deploy by default)
 dotnet build CS2MCP.Bridge\CS2MCP.Bridge.csproj
+
+# After normally exiting the game and backing up the installed DLL/PDB:
+dotnet build CS2MCP.Bridge\CS2MCP.Bridge.csproj -p:DeployToLocalMods=true
 
 # 2. Build the MCP server
 cd mcp-server
@@ -65,7 +68,9 @@ The MCP server loads `mcp-server/.env` via [dotenv](https://github.com/motdotla/
 |---|---|---|---|
 | `CS2_BRIDGE_URL` | MCP server | `http://127.0.0.1:8642` | Address of the bridge mod |
 | `CS2MCP_PORT` | game process | `8642` | Bridge listen port (change both together) |
+| `CS2MCP_LAUNCH_MODE` | Game process | unset | Optional `background`/`foreground` launch preset (30/90 base FPS); unset preserves player settings, with no focus-based switching |
 | `CS2_PATH` | build time | auto-probed | Game install folder |
+| `CS2_GAME_USER_DATA` | MCP server | standard game user-data directory | Optional Skyve diagnostic source directory; read-only |
 
 ## Using with Claude
 
@@ -90,7 +95,12 @@ claude mcp add cs2 -- node <repo-path>\mcp-server\dist\index.js
 
 Start the game, load a save, then ask Claude: "How are my city's finances?", "Zone a residential area by the river", "Build a road connecting the industrial area to the highway".
 
-## Tool Reference (62 tools)
+## Tool Reference (118 tools)
+
+The tables below cover the original tools. The [complete tool catalog](docs/tool-reference.md)
+includes the additional facility, upgrade, terrain, resource, native road-layout and optional-mod tools.
+See [native control and validation](docs/native-control.md) for preview semantics, version gates,
+failure recovery and optional-mod compatibility.
 
 **State & view**
 
@@ -143,7 +153,7 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 
 | Tool | Description |
 |---|---|
-| `cs2_get_taxes` / `cs2_set_tax` | Tax rates for the four zone classes (clamped to game limits) |
+| `cs2_get_taxes` / `cs2_set_tax` | Class and individual tax rates; out-of-range inputs are rejected against native limits |
 | `cs2_policies` / `cs2_set_policy` | City policies (with localized names) |
 | `cs2_service_budgets` / `cs2_set_service_budget` | Per-service budget sliders 50-150% |
 | `cs2_get_fees` / `cs2_set_fee` | Service fees (electricity/water/healthcare/education...) |
@@ -196,3 +206,5 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 ## License
 
 [Apache-2.0](LICENSE)
+
+[Explicit save contexts, single/batch control and optional monitoring](docs/city-control-cli.md)。

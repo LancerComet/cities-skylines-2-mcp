@@ -65,12 +65,33 @@ namespace CS2MCP
                 position = new { x = controller.position.x, y = controller.position.y, z = controller.position.z },
                 angle = new { x = controller.angle.x, y = controller.angle.y },
                 zoom = controller.zoom,
+                edgeScrolling = controller.edgeScrolling,
+                controllerEnabled = controller.controllerEnabled,
+                activeController = cameraSystem.activeCameraController?.GetType().FullName,
                 note = "pivot = look-at point; angle.x = compass rotation deg, angle.y = tilt deg; zoom = distance",
             });
         }
 
         private BridgeResponse SetCamera(BridgeRequest request)
         {
+            // 先完整检查，再改相机；非法后续参数不能留下已经生效的前缀。
+            foreach (string key in new[] { "x", "z", "y", "angleX", "angleY", "zoom" })
+                if (request.Query.ContainsKey(key) && !request.TryGetFloat(key, out _))
+                    return BridgeResponse.Error(400, key + " must be finite");
+            foreach (string key in new[] { "edgeScrolling", "clearInfoView" })
+                if (request.Query.ContainsKey(key) && !request.TryGetBool(key, out _))
+                    return BridgeResponse.Error(400, key + " must be boolean");
+            if (request.Query.ContainsKey("x") != request.Query.ContainsKey("z"))
+                return BridgeResponse.Error(400, "camera pivot requires both x and z");
+            if (request.Query.ContainsKey("y") && !request.Query.ContainsKey("x"))
+                return BridgeResponse.Error(400, "camera height requires x and z");
+            if ((request.TryGetFloat("x", out float checkedX) && math.abs(checkedX) > kWorldHalfSize)
+                || (request.TryGetFloat("z", out float checkedZ) && math.abs(checkedZ) > kWorldHalfSize))
+                return BridgeResponse.Error(400, "camera pivot must be inside playable map");
+            if (request.TryGetFloat("angleY", out float checkedTilt) && (checkedTilt < 0f || checkedTilt > 89f))
+                return BridgeResponse.Error(400, "camera tilt must be 0..89");
+            if (request.TryGetFloat("zoom", out float checkedZoom) && (checkedZoom < 10f || checkedZoom > 10000f))
+                return BridgeResponse.Error(400, "camera distance must be 10..10000");
             CameraUpdateSystem cameraSystem = World.GetOrCreateSystemManaged<CameraUpdateSystem>();
             CameraController controller = cameraSystem.gamePlayController;
             if (controller == null)
@@ -79,6 +100,20 @@ namespace CS2MCP
             }
 
             bool changed = false;
+            if (request.TryGetBool("clearInfoView", out bool clearInfoView) && clearInfoView)
+            {
+                // 原生信息视图入口；只调整当前观察视图，不修改模组或玩家持久设置。
+                World.GetOrCreateSystemManaged<Game.UI.InGame.InfoviewsUISystem>().SetActiveInfoview(Entity.Null);
+                changed = true;
+            }
+            if (request.Query.TryGetValue("edgeScrolling", out string rawEdgeScrolling))
+            {
+                if (!bool.TryParse(rawEdgeScrolling, out bool edgeScrolling))
+                    return BridgeResponse.Error(400, "edgeScrolling must be true or false");
+                // 调用游戏公开相机选项；不模拟输入、不修改玩家持久设置。
+                controller.edgeScrolling = edgeScrolling;
+                changed = true;
+            }
             bool hasX = request.TryGetFloat("x", out float x);
             bool hasZ = request.TryGetFloat("z", out float z);
             if (hasX && hasZ)
@@ -102,21 +137,24 @@ namespace CS2MCP
                 }
                 if (request.Query.ContainsKey("angleY"))
                 {
-                    angle.y = math.clamp(angleY, 0f, 89f);
+                    angle.y = angleY;
                 }
                 controller.angle = angle;
                 changed = true;
             }
             if (request.TryGetFloat("zoom", out float zoom))
             {
-                controller.zoom = math.clamp(zoom, 10f, 10000f);
+                controller.zoom = zoom;
                 changed = true;
             }
 
             if (!changed)
             {
-                return BridgeResponse.Error(400, "provide at least one of: x&z (pivot, y optional), angleX, angleY, zoom");
+                return BridgeResponse.Error(400, "provide x&z, angleX, angleY, zoom, edgeScrolling or clearInfoView=true");
             }
+            // 原生公开切换接口；选择物体后的 Orbit 控制器可能仍在驱动画面。
+            // 仅改未启用的 gameplay 参数不能改变实际视角。
+            cameraSystem.activeCameraController = controller;
             return GetCamera();
         }
 
@@ -130,6 +168,16 @@ namespace CS2MCP
             int resolution = request.TryGetInt("resolution", out int rawResolution)
                 ? math.clamp(rawResolution, 16, 256)
                 : 64;
+            bool regional = request.Query.ContainsKey("x") || request.Query.ContainsKey("z") || request.Query.ContainsKey("radius");
+            float minX = -kWorldHalfSize, minZ = -kWorldHalfSize, maxX = kWorldHalfSize, maxZ = kWorldHalfSize;
+            if (regional)
+            {
+                if (!request.TryGetFloat("x",out float x) || !request.TryGetFloat("z",out float z) || !request.TryGetFloat("radius",out float radius)
+                    || !math.all(math.isfinite(new float3(x,z,radius))) || math.abs(x) > kWorldHalfSize || math.abs(z) > kWorldHalfSize || radius < 8 || radius > kWorldHalfSize)
+                    return BridgeResponse.Error(400,"regional terrain needs finite x/z/radius, center inside playable map and radius 8..7168m");
+                minX = math.max(-kWorldHalfSize,x-radius); maxX = math.min(kWorldHalfSize,x+radius);
+                minZ = math.max(-kWorldHalfSize,z-radius); maxZ = math.min(kWorldHalfSize,z+radius);
+            }
 
             TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
             TerrainHeightData heightData = terrain.GetHeightData();
@@ -137,15 +185,15 @@ namespace CS2MCP
             WaterSurfaceData<SurfaceWater> surfaceData = water.GetSurfaceData(out JobHandle waterDeps);
             waterDeps.Complete();
 
-            float step = kWorldHalfSize * 2f / resolution;
+            float stepX = (maxX-minX)/resolution, stepZ = (maxZ-minZ)/resolution;
             var heights = new List<float>(resolution * resolution);
             var waterDepths = new List<float>(resolution * resolution);
             for (int row = 0; row < resolution; row++)
             {
-                float worldZ = -kWorldHalfSize + (row + 0.5f) * step;
+                float worldZ = minZ + (row + 0.5f) * stepZ;
                 for (int col = 0; col < resolution; col++)
                 {
-                    float worldX = -kWorldHalfSize + (col + 0.5f) * step;
+                    float worldX = minX + (col + 0.5f) * stepX;
                     var samplePosition = new float3(worldX, 0f, worldZ);
                     heights.Add((float)Math.Round(TerrainUtils.SampleHeight(ref heightData, samplePosition), 1));
                     float depth = WaterUtils.SampleDepth(ref surfaceData, samplePosition);
@@ -156,10 +204,12 @@ namespace CS2MCP
             return BridgeResponse.Json(new
             {
                 resolution,
-                worldMin = -kWorldHalfSize,
-                worldMax = kWorldHalfSize,
-                cellSize = step,
-                note = "row-major: index = row*resolution + col; world x = worldMin+(col+0.5)*cellSize, world z = worldMin+(row+0.5)*cellSize; heights in meters; waterDepths > 0 marks rivers/lakes/sea",
+                regional,
+                worldMin = regional ? (float?)null : -kWorldHalfSize,
+                worldMax = regional ? (float?)null : kWorldHalfSize,
+                cellSize = regional ? (float?)null : stepX,
+                bounds = new { minX,minZ,maxX,maxZ }, cellSizeX = stepX, cellSizeZ = stepZ,
+                note = "row-major: index=row*resolution+col; x=bounds.minX+(col+0.5)*cellSizeX, z=bounds.minZ+(row+0.5)*cellSizeZ; heights in metres; water depth <=0.05m reported as zero; legacy scalar worldMin/worldMax/cellSize only for whole map; water/terrain changes are asynchronous",
                 heights,
                 waterDepths,
             });
@@ -383,6 +433,13 @@ namespace CS2MCP
                     counts[type] = counts.TryGetValue(type, out int c) ? c + 1 : 1;
                     if (items.Count < limit)
                     {
+                        var notificationPrefab = prefab as NotificationIconPrefab;
+                        string description = notificationPrefab?.m_Description;
+                        string targetDescription = notificationPrefab?.m_TargetDescription;
+                        string localizedDescription = null, localizedTargetDescription = null;
+                        var dictionary = Game.SceneFlow.GameManager.instance?.localizationManager?.activeDictionary;
+                        if (!string.IsNullOrEmpty(description)) dictionary?.TryGetValue(description, out localizedDescription);
+                        if (!string.IsNullOrEmpty(targetDescription)) dictionary?.TryGetValue(targetDescription, out localizedTargetDescription);
                         object target = null;
                         if (EntityManager.HasComponent<Game.Common.Owner>(iconEntity))
                         {
@@ -398,6 +455,7 @@ namespace CS2MCP
                         items.Add(new
                         {
                             type,
+                            description, targetDescription, localizedDescription, localizedTargetDescription,
                             priority = (int)icon.m_Priority,
                             location = new { x = icon.m_Location.x, y = icon.m_Location.y, z = icon.m_Location.z },
                             target,
@@ -436,6 +494,7 @@ namespace CS2MCP
             var result = new Dictionary<string, object>
             {
                 ["entity"] = new { index, version },
+                ["capturedAtUtc"] = System.DateTime.UtcNow.ToString("o"),
             };
 
             if (EntityManager.HasComponent<PrefabRef>(entity))
@@ -457,6 +516,48 @@ namespace CS2MCP
             if (EntityManager.HasComponent<Game.Common.Destroyed>(entity)) flags.Add("destroyed");
             if (EntityManager.HasComponent<Game.Common.Owner>(entity)) flags.Add("hasOwner");
             result["flags"] = flags;
+            if (EntityManager.HasComponent<Game.Net.Curve>(entity))
+            {
+                var curve = EntityManager.GetComponentData<Game.Net.Curve>(entity).m_Bezier;
+                result["networkGeometry"] = new { a = InterchangePoint(curve.a), b = InterchangePoint(curve.b),
+                    c = InterchangePoint(curve.c), d = InterchangePoint(curve.d),
+                    note = "实际世界坐标曲线；与原始定义的差异须考虑地形适配、节点裁切及原生生成，不只比较端点" };
+            }
+            result["utilities"] = DescribeUtilityState(entity);
+            result["trafficMod"] = DescribeTrafficModData(entity);
+            result["nativeConnections"] = DescribeNativeObjectConnections(entity);
+            if (EntityManager.HasComponent<Game.Citizens.Citizen>(entity)) result["citizen"] = DescribeCitizenState(entity);
+            if (EntityManager.HasComponent<Game.Objects.Attached>(entity))
+            {
+                var attached = EntityManager.GetComponentData<Game.Objects.Attached>(entity);
+                result["attachedTo"] = new { entity = Ref(attached.m_Parent), prefab = PrefabNameOf(attached.m_Parent) };
+            }
+            if (EntityManager.HasComponent<Game.Net.Road>(entity)) result["turnRestrictions"] = DescribeTurnRestrictions(entity);
+            if (EntityManager.HasComponent<Game.Common.Owner>(entity)) {
+                Entity owner = EntityManager.GetComponentData<Game.Common.Owner>(entity).m_Owner;
+                result["owner"] = new { entity = Ref(owner), prefab = PrefabNameOf(owner) };
+            }
+            if (EntityManager.HasComponent<Game.Net.Lane>(entity)) result["lane"] = DescribeTransitLane(entity);
+            if (EntityManager.HasComponent<Game.Routes.Connected>(entity))
+                result["routeConnected"] = Ref(EntityManager.GetComponentData<Game.Routes.Connected>(entity).m_Connected);
+            if (EntityManager.HasBuffer<Game.Net.SubLane>(entity)) {
+                var lanes = EntityManager.GetBuffer<Game.Net.SubLane>(entity, true);
+                int laneLimit = request.TryGetInt("laneLimit", out int requestedLimit) ? requestedLimit : 0;
+                int laneOffset = request.TryGetInt("laneOffset", out int requestedOffset) ? requestedOffset : 0;
+                if (laneLimit < 0 || laneLimit > 256 || laneOffset < 0 || laneOffset > 65535)
+                    return BridgeResponse.Error(400, "laneLimit must be 0..256 and laneOffset must be 0..65535");
+                var details = new List<object>();
+                for (int i = laneOffset; i < lanes.Length && i < laneOffset + laneLimit; i++)
+                    details.Add(DescribeTransitLane(lanes[i].m_SubLane, lanes[i].m_PathMethods.ToString()));
+                result["subLaneCount"] = lanes.Length;
+                result["subLanes"] = details;
+                result["subLaneOffset"] = laneOffset;
+                result["subLanesReturned"] = details.Count;
+                result["subLanesComplete"] = laneOffset == 0 && details.Count == lanes.Length;
+                result["nextLaneOffset"] = laneOffset + details.Count < lanes.Length ? (object)(laneOffset + details.Count) : null;
+                result["laneDetailsNote"] = "summary by default; use laneLimit and laneOffset to page native lanes without dropping utility or Traffic diagnostics";
+                if (laneLimit > 0) result["parkingOccupancy"] = DescribeParkingOccupancy(entity);
+            }
 
             if (EntityManager.HasBuffer<Game.Buildings.Renter>(entity))
             {

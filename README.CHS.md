@@ -31,8 +31,11 @@ Cities: Skylines II
 ## 构建与安装
 
 ```powershell
-# 1. 编译游戏内 Mod（构建后自动部署到游戏的本地 Mods 目录）
+# 1. 编译游戏内 Mod（默认只构建，不部署）
 dotnet build CS2MCP.Bridge\CS2MCP.Bridge.csproj
+
+# 正常退出游戏并备份已安装DLL/PDB后，显式部署：
+dotnet build CS2MCP.Bridge\CS2MCP.Bridge.csproj -p:DeployToLocalMods=true
 
 # 2. 构建 MCP server
 cd mcp-server
@@ -65,6 +68,7 @@ MCP server 通过 [dotenv](https://github.com/motdotla/dotenv) 读取 `mcp-serve
 |---|---|---|---|
 | `CS2_BRIDGE_URL` | MCP server | `http://127.0.0.1:8642` | 桥接 Mod 的地址 |
 | `CS2MCP_PORT` | 游戏进程 | `8642` | 桥接 Mod 的监听端口（改它需同步改 `CS2_BRIDGE_URL`） |
+| `CS2MCP_LAUNCH_MODE` | 游戏进程 | 未设置 | 可选 `background`/`foreground` 启动预设（30/90基础帧）；省略保留玩家设置，不按焦点自动切换 |
 | `CS2_PATH` | 构建期 | 自动探测 | 游戏安装目录 |
 
 ## 在 Claude 中使用
@@ -90,7 +94,9 @@ claude mcp add cs2 -- node <仓库路径>\mcp-server\dist\index.js
 
 启动游戏、读取存档，然后问 Claude："看看我的城市财政状况"、"在河边划一片住宅区"、"修一条路把工业区接上高速"。
 
-## 工具总览（44 个）
+## 工具总览（118 个）
+
+下表保留原有入口概览；新增设施目录、扩建、地形、道路布局和可选模组能力见[完整工具目录](docs/tool-reference.md)。[原生控制与验收](docs/native-control.md)说明预览语义、原生限制、最低桥接版本、失败恢复和模组兼容边界。
 
 **状态与画面**
 
@@ -172,3 +178,5 @@ claude mcp add cs2 -- node <仓库路径>\mcp-server\dist\index.js
 ## License
 
 [Apache-2.0](LICENSE)
+
+[显式存档上下文、单次/批次控制与可选监控](docs/city-control-cli.md)。

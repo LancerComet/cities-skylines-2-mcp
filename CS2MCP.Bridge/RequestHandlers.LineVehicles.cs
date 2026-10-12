@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using Game.Prefabs;
 using Game.Routes;
+using Game.Vehicles;
+using Newtonsoft.Json;
 using Unity.Collections;
 using Unity.Entities;
 
@@ -25,9 +27,7 @@ namespace CS2MCP
             {
                 if (!m_TransitVehiclePrefabQueryCreated)
                 {
-                    m_TransitVehiclePrefabQuery = EntityManager.CreateEntityQuery(
-                        ComponentType.ReadOnly<PublicTransportVehicleData>(),
-                        ComponentType.ReadOnly<PrefabData>());
+                    m_TransitVehiclePrefabQuery = EntityManager.CreateEntityQuery(TransportVehicleSelectData.GetEntityQueryDesc());
                     m_TransitVehiclePrefabQueryCreated = true;
                 }
                 return m_TransitVehiclePrefabQuery;
@@ -65,9 +65,11 @@ namespace CS2MCP
             }
 
             var candidates = new List<object>();
-            foreach (Entity prefab in LineVehicleCandidates(lineData.m_TransportType))
+            LineVehicleCandidates(lineData, out var primaryCandidates, out var secondaryCandidates, out var energies);
+            var allCandidates = new List<Entity>(primaryCandidates); allCandidates.AddRange(secondaryCandidates);
+            foreach (Entity prefab in allCandidates)
             {
-                PublicTransportVehicleData data = EntityManager.GetComponentData<PublicTransportVehicleData>(prefab);
+                bool passenger = EntityManager.HasComponent<PublicTransportVehicleData>(prefab);
                 object carriages = null;
                 if (EntityManager.HasBuffer<VehicleCarriageElement>(prefab))
                 {
@@ -92,22 +94,32 @@ namespace CS2MCP
                 {
                     name = VehiclePrefabName(prefabSystem, prefab),
                     role = VehicleRole(prefab),
-                    passengerCapacity = data.m_PassengerCapacity,
-                    maxSpeed = EntityManager.HasComponent<TrainData>(prefab) ? EntityManager.GetComponentData<TrainData>(prefab).m_MaxSpeed : (float?)null,
+                    slot = primaryCandidates.Contains(prefab) ? "primary" : "secondary",
+                    passengerCapacity = passenger ? EntityManager.GetComponentData<PublicTransportVehicleData>(prefab).m_PassengerCapacity : 0,
+                    cargo = DescribeModelCargo(prefab),
+                    maxSpeed = EntityManager.HasComponent<TrainData>(prefab) ? EntityManager.GetComponentData<TrainData>(prefab).m_MaxSpeed
+                        : EntityManager.HasComponent<CarData>(prefab) ? EntityManager.GetComponentData<CarData>(prefab).m_MaxSpeed : (float?)null,
+                    nativeFacts = new { vehicle = ModEntityComponents(prefab, "Game.Prefabs.VehicleData"), train = ModEntityComponents(prefab, "Game.Prefabs.Train"),
+                        car = ModEntityComponents(prefab, "Game.Prefabs.CarData"), watercraft = ModEntityComponents(prefab, "Game.Prefabs.WatercraftData"), aircraft = ModEntityComponents(prefab, "Game.Prefabs.AircraftData") },
                     carriages,
                     locked = IsLocked(prefab),
                 });
             }
 
+            var fleet = new List<object>();
+            if (EntityManager.HasBuffer<RouteVehicle>(line))
+                foreach (var vehicle in EntityManager.GetBuffer<RouteVehicle>(line, true))
+                    if (fleet.Count < 128 && EntityManager.Exists(vehicle.m_Vehicle)) fleet.Add(DescribeOperatingServiceVehicle(vehicle.m_Vehicle));
             return BridgeResponse.Json(new
             {
                 line = new { index = line.Index, version = line.Version },
                 name = LabelOf(World.GetOrCreateSystemManaged<Game.UI.NameSystem>(), line),
                 transportType = TransitTypeName(lineData.m_TransportType),
+                isCargo = lineData.m_CargoTransport, depotEnergyTypes = energies.ToString(),
                 selected,
                 candidates,
-                note = "selected empty = the game picks a random model per vehicle; set one with cs2_set_line_vehicles " +
-                       "(primary = engine or single vehicle, secondary = carriage); only new vehicles use it",
+                operational = ModEntityComponents(line, "Game.Routes.TransportLine"), routeVehicles = ModEntityComponents(line, "Game.Routes.RouteVehicle"), fleet,
+                note = "候选使用原生SelectVehiclesSection同一筛选；slot是原生栏，普通列车车厢primary／机车secondary。两栏是独立集合而非编组配对；空栏随机。容量、速度为原生单位；旧车保持模型，新车按新集合选择。车队限128项。",
             });
         }
 
@@ -131,49 +143,28 @@ namespace CS2MCP
             }
 
             bool clear = request.TryGetBool("clear", out bool rawClear) && rawClear;
-            Entity primary = Entity.Null;
-            Entity secondary = Entity.Null;
+            var primary = new List<Entity>();
+            var secondary = new List<Entity>();
+            bool hasChoice = request.Query.ContainsKey("primary") || request.Query.ContainsKey("secondary") || request.Query.ContainsKey("primaryModels") || request.Query.ContainsKey("secondaryModels");
+            if (clear && hasChoice) return BridgeResponse.Error(400, "clear cannot be combined with model choices");
+            if (!clear && !hasChoice) return BridgeResponse.Error(400, "provide model choices, or clear=true");
             if (!clear)
             {
-                if (!request.Query.TryGetValue("primary", out string primaryName) || string.IsNullOrEmpty(primaryName))
-                {
-                    return BridgeResponse.Error(400, "provide ?primary=<vehicle name from cs2_line_vehicles> (and optionally secondary), or clear=true");
-                }
-                if (!TryFindLineVehicle(lineData.m_TransportType, primaryName, out primary, out error))
-                {
-                    return error;
-                }
-                if (request.Query.TryGetValue("secondary", out string secondaryName) && !string.IsNullOrEmpty(secondaryName)
-                    && !TryFindLineVehicle(lineData.m_TransportType, secondaryName, out secondary, out error))
-                {
-                    return error;
-                }
-                if (VehicleRole(primary) == "carriage")
-                {
-                    return BridgeResponse.Error(400, $"'{primaryName}' is a carriage; use it as secondary with an engine as primary");
-                }
-                if (secondary != Entity.Null && VehicleRole(secondary) != "carriage")
-                {
-                    return BridgeResponse.Error(400, "secondary must be a carriage");
-                }
-                if (!IsForced(request) && (IsLocked(primary) || (secondary != Entity.Null && IsLocked(secondary))))
-                {
-                    return BridgeResponse.Error(409, "vehicle model is locked (milestone not reached)");
-                }
+                LineVehicleCandidates(lineData, out var candidatesA, out var candidatesB, out _);
+                if (!ResolveLineSelection(request, "primary", "primaryModels", candidatesA, out primary, out error)
+                    || !ResolveLineSelection(request, "secondary", "secondaryModels", candidatesB, out secondary, out error)) return error;
             }
 
             DynamicBuffer<VehicleModel> models = EntityManager.GetBuffer<VehicleModel>(line);
             models.Clear();
-            if (!clear)
-            {
-                models.Add(new VehicleModel { m_PrimaryPrefab = primary, m_SecondaryPrefab = secondary });
-            }
+            // 与原生SelectVehiclesSection相同：两个栏各自是候选集合，不是逐项配对的指定编组。
+            for (int i = 0; i < Math.Max(primary.Count, secondary.Count); i++)
+                models.Add(new VehicleModel { m_PrimaryPrefab = i < primary.Count ? primary[i] : Entity.Null, m_SecondaryPrefab = i < secondary.Count ? secondary[i] : Entity.Null });
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             return BridgeResponse.Json(new
             {
                 line = new { index = line.Index, version = line.Version },
-                primary = VehiclePrefabName(prefabSystem, primary),
-                secondary = VehiclePrefabName(prefabSystem, secondary),
+                selected = ModEntityComponents(line, "Game.Routes.VehicleModel"),
                 cleared = clear,
                 note = "vehicles already running keep their model; new vehicles from the depot use this one",
             });
@@ -193,41 +184,70 @@ namespace CS2MCP
             return true;
         }
 
-        private List<Entity> LineVehicleCandidates(TransportType type)
+        private void LineVehicleCandidates(TransportLineData lineData, out List<Entity> primary, out List<Entity> secondary, out EnergyTypes energies)
         {
-            var result = new List<Entity>();
-            using (NativeArray<Entity> prefabs = TransitVehiclePrefabQuery.ToEntityArray(Allocator.Temp))
-            {
-                foreach (Entity prefab in prefabs)
-                {
-                    PublicTransportVehicleData data = EntityManager.GetComponentData<PublicTransportVehicleData>(prefab);
-                    if (data.m_TransportType == type && (data.m_PurposeMask & PublicTransportPurpose.TransportLine) != 0)
-                    {
-                        result.Add(prefab);
-                    }
+            primary = new List<Entity>(); secondary = new List<Entity>(); energies = EnergyTypes.None;
+            using (var depots = TransitDepotQuery.ToEntityArray(Allocator.Temp))
+                foreach (var depot in depots) {
+                    Entity prefab = EntityManager.GetComponentData<PrefabRef>(depot).m_Prefab;
+                    if (!EntityManager.HasComponent<TransportDepotData>(prefab)) continue;
+                    var data = CombinedFacilityData<TransportDepotData>(depot, prefab);
+                    if (data.m_TransportType == lineData.m_TransportType) energies |= data.m_EnergyTypes;
                 }
+            var select = new TransportVehicleSelectData(m_System);
+            Unity.Jobs.JobHandle pending = default;
+            try {
+                select.PreUpdate(m_System, World.GetOrCreateSystemManaged<Game.City.CityConfigurationSystem>(), TransitVehiclePrefabQuery, Allocator.TempJob, out pending);
+                pending.Complete();
+                using (var a = new NativeList<Entity>(32, Allocator.Temp))
+                using (var b = new NativeList<Entity>(16, Allocator.Temp)) {
+                    select.ListVehicles(lineData.m_TransportType, energies, lineData.m_SizeClass,
+                        lineData.m_CargoTransport ? (PublicTransportPurpose)0 : PublicTransportPurpose.TransportLine,
+                        lineData.m_CargoTransport ? (Game.Economy.Resource)ulong.MaxValue : Game.Economy.Resource.NoResource,
+                        a, b, ignoreTheme: true);
+                    foreach (var entity in a) if (!IsLocked(entity) && !primary.Contains(entity)) primary.Add(entity);
+                    foreach (var entity in b) if (!IsLocked(entity) && !secondary.Contains(entity)) secondary.Add(entity);
+                }
+            } finally {
+                // PreUpdate更新lookup时也可能失败；未创建缓存的PostUpdate为原生no-op。
+                // 已创建缓存仍可能被作业借用，沿真实依赖调度释放，不提前Dispose。
+                select.PostUpdate(pending);
             }
-            return result;
         }
 
-        private bool TryFindLineVehicle(TransportType type, string name, out Entity prefab, out BridgeResponse error)
+        private bool ResolveLineSelection(BridgeRequest request, string singleKey, string listKey, List<Entity> candidates, out List<Entity> result, out BridgeResponse error)
         {
-            error = null;
+            error = null; result = new List<Entity>(); var names = new List<string>();
+            bool single = request.Query.TryGetValue(singleKey, out var name), multiple = request.Query.TryGetValue(listKey, out var json);
+            if (single && multiple) { error = BridgeResponse.Error(400, $"use {singleKey} or {listKey}, not both"); return false; }
+            if (multiple) {
+                try { names = JsonConvert.DeserializeObject<List<string>>(json); }
+                catch (JsonException) { error = BridgeResponse.Error(400, $"{listKey} must be an array of names"); return false; }
+                if (names == null || names.Count > 32) { error = BridgeResponse.Error(400, $"{listKey} requires 0..32 names"); return false; }
+            } else if (single) names.Add(name);
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
-            var names = new List<string>();
-            foreach (Entity candidate in LineVehicleCandidates(type))
-            {
-                string candidateName = VehiclePrefabName(prefabSystem, candidate);
-                if (string.Equals(candidateName, name, StringComparison.OrdinalIgnoreCase))
-                {
-                    prefab = candidate;
-                    return true;
-                }
-                names.Add(candidateName);
+            foreach (var requested in names) {
+                if (string.IsNullOrWhiteSpace(requested)) { error = BridgeResponse.Error(400, "model names must be nonempty"); return false; }
+                Entity found = Entity.Null;
+                foreach (var candidate in candidates) if (string.Equals(VehiclePrefabName(prefabSystem, candidate), requested, StringComparison.OrdinalIgnoreCase)) { found = candidate; break; }
+                if (found == Entity.Null) { error = BridgeResponse.Error(409, $"'{requested}' is not normally selectable in {singleKey} for this line; refresh candidates"); return false; }
+                if (result.Contains(found)) { error = BridgeResponse.Error(400, "duplicate model selection"); return false; }
+                result.Add(found);
             }
-            prefab = Entity.Null;
-            error = BridgeResponse.Error(404, $"unknown {TransitTypeName(type)} vehicle '{name}'; available: {string.Join(", ", names)}");
-            return false;
+            return true;
+        }
+
+        private object DescribeModelCargo(Entity prefab)
+        {
+            if (!EntityManager.HasComponent<CargoTransportVehicleData>(prefab)) return null;
+            var data = EntityManager.GetComponentData<CargoTransportVehicleData>(prefab); ulong mask = (ulong)data.m_Resources;
+            var resources = new List<string>();
+            foreach (Game.Economy.Resource resource in Enum.GetValues(typeof(Game.Economy.Resource))) {
+                ulong flag = (ulong)resource;
+                if (flag != 0 && (flag & (flag - 1)) == 0 && (mask & flag) != 0) resources.Add(resource.ToString());
+            }
+            return new { capacityRaw = data.m_CargoCapacity, maxResourceCount = data.m_MaxResourceCount, maintenanceRangeRaw = data.m_MaintenanceRange,
+                resourceMask = "0x" + mask.ToString("X16"), resources };
         }
 
         private string VehicleRole(Entity prefab)

@@ -624,8 +624,20 @@ namespace CS2MCP
             {
                 problems.Add(error);
             }
+            if (EntityManager.HasBuffer<RouteWaypoint>(tempRoute)) {
+                var waypoints = EntityManager.GetBuffer<RouteWaypoint>(tempRoute, true);
+                for (int i = 0; i < waypoints.Length; i++) {
+                    Entity waypoint = waypoints[i].m_Waypoint;
+                    if (!EntityManager.HasComponent<RouteLane>(waypoint)) {
+                        problems.Add($"waypoint #{i + 1} has no native RouteLane");
+                        continue;
+                    }
+                    var lane = EntityManager.GetComponentData<RouteLane>(waypoint);
+                    problems.Add($"waypoint #{i + 1} lanes start={lane.m_StartLane.Index}:{lane.m_StartLane.Version}@{lane.m_StartCurvePos:F3}, end={lane.m_EndLane.Index}:{lane.m_EndLane.Version}@{lane.m_EndCurvePos:F3}");
+                }
+            }
             string detail = problems.Count > 0 ? string.Join("; ", problems) : "stops unreachable or wrong stop type";
-            return $"line blocked by game validation: {detail}. Nothing was created. " +
+            return $"line blocked by game validation ({m_PendingPrefab?.name}): {detail}. Nothing was created. " +
                    "Stops must be connected by roads/tracks usable by this transport type.";
         }
 

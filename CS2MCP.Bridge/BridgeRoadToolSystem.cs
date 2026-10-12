@@ -190,10 +190,12 @@ namespace CS2MCP
                         {
                             List<string> errors = CollectTempErrors();
                             applyMode = ApplyMode.Clear;
-                            CompletePending(BridgeResponse.Error(409,
-                                OperationName + " blocked by game validation (" +
+                            CompletePending(BridgeResponse.Json(new {
+                                error = OperationName + " blocked by game validation (" +
                                 (errors.Count > 0 ? string.Join(", ", errors) : "overlap, unsupported road type, protected segment...") +
-                                "); nothing was changed"));
+                                "); nothing was changed",
+                                validationErrors = CollectTempErrorLocations()
+                            }, 409));
                         }
                         m_Stage = Stage.Finish;
                         break;
@@ -324,6 +326,15 @@ namespace CS2MCP
                 course.m_EndPosition.m_Flags |= CoursePosFlags.FreeHeight;
             }
 
+            // 与 Anarchy 1.8 NetworkDefinitionSystem.Ground 相同：保持世界几何，
+            // 仅将定义的结构Elevation归零。仍走后续原生地形、碰撞、解锁与收费校验。
+            if (m_PendingRequest.Query.TryGetValue("composition", out string composition) && composition == "ground")
+            {
+                course.m_Elevation = float2.zero;
+                course.m_StartPosition.m_Elevation = float2.zero;
+                course.m_EndPosition.m_Elevation = float2.zero;
+            }
+
             Unity.Mathematics.Random random = RandomSeed.Next().GetRandom(0);
             EntityCommandBuffer commandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
             Entity entity = commandBuffer.CreateEntity();
@@ -339,6 +350,26 @@ namespace CS2MCP
 
         private CoursePos ToCoursePos(BuildEnd end, float courseDelta)
         {
+            int parentMesh = -1;
+            Entity owner = end.Entity;
+            // 与原生GetCoursePos一致，保留建筑/扩建端口所属网格，避免把端口当无主自由节点。
+            for (int depth = 0; depth < 16 && EntityManager.Exists(owner) && EntityManager.HasComponent<Owner>(owner)
+                && !EntityManager.HasComponent<Game.Buildings.Building>(owner) && !EntityManager.HasComponent<Game.Buildings.Extension>(owner); depth++)
+            {
+                if (EntityManager.HasComponent<LocalTransformCache>(owner))
+                    parentMesh = EntityManager.GetComponentData<LocalTransformCache>(owner).m_ParentMesh;
+                else if (EntityManager.HasComponent<Edge>(owner))
+                {
+                    var edge = EntityManager.GetComponentData<Edge>(owner);
+                    if (EntityManager.HasComponent<LocalTransformCache>(edge.m_Start) && EntityManager.HasComponent<LocalTransformCache>(edge.m_End))
+                    {
+                        int a = EntityManager.GetComponentData<LocalTransformCache>(edge.m_Start).m_ParentMesh;
+                        int b = EntityManager.GetComponentData<LocalTransformCache>(edge.m_End).m_ParentMesh;
+                        parentMesh = a == b ? a : -1;
+                    }
+                }
+                owner = EntityManager.GetComponentData<Owner>(owner).m_Owner;
+            }
             return new CoursePos
             {
                 m_Entity = end.Entity,
@@ -347,7 +378,7 @@ namespace CS2MCP
                 m_Elevation = end.Elevation,
                 m_Rotation = NetUtils.GetNodeRotation(MathUtils.Tangent(m_BuildCurve, courseDelta)),
                 m_CourseDelta = courseDelta,
-                m_ParentMesh = -1,
+                m_ParentMesh = parentMesh,
             };
         }
 
@@ -512,6 +543,28 @@ namespace CS2MCP
                 }
             }
             return names;
+        }
+
+        // 返回原生错误图标位置，方便按真实冲突调整几何；只读预览，不解除校验。
+        private List<object> CollectTempErrorLocations()
+        {
+            var rows = new List<object>();
+            using (var icons = m_IconQuery.ToEntityArray(Allocator.Temp))
+                foreach (var icon in icons) {
+                    var owner = EntityManager.GetComponentData<Owner>(icon).m_Owner;
+                    if (!EntityManager.Exists(owner) || !EntityManager.HasComponent<Temp>(owner)) continue;
+                    var prefab = EntityManager.GetComponentData<PrefabRef>(icon).m_Prefab;
+                    if (!EntityManager.HasComponent<ToolErrorData>(prefab)) continue;
+                    object location = null;
+                    if (EntityManager.HasComponent<Game.Notifications.Icon>(icon)) {
+                        var p = EntityManager.GetComponentData<Game.Notifications.Icon>(icon).m_Location;
+                        location = new { x = p.x, y = p.y, z = p.z };
+                    }
+                    rows.Add(new { error = EntityManager.GetComponentData<ToolErrorData>(prefab).m_Error.ToString(),
+                        temporaryOwner = new { index = owner.Index, version = owner.Version }, location });
+                    if (rows.Count >= 32) break;
+                }
+            return rows;
         }
 
         private void CompletePending(BridgeResponse response)

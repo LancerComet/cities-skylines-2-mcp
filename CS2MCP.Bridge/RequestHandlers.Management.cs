@@ -85,7 +85,8 @@ namespace CS2MCP
                 return BridgeResponse.Error(400, "provide ?amount=<int> (new loan principal; 0 repays fully)");
             }
             LoanSystem loans = World.GetOrCreateSystemManaged<LoanSystem>();
-            int applied = math.clamp(amount, 0, loans.Creditworthiness);
+            if (amount < 0 || amount > loans.Creditworthiness) return BridgeResponse.Error(400, "loan principal must be within native creditworthiness range");
+            int applied = amount;
             LoanInfo offer = loans.RequestLoanOffer(applied);
             loans.ChangeLoan(applied);
             LoanInfo current = loans.CurrentLoan;
@@ -105,6 +106,9 @@ namespace CS2MCP
                 return error;
             }
             ServiceFeeSystem feeSystem = World.GetOrCreateSystemManaged<ServiceFeeSystem>();
+            ServiceFeeParameterData parameters;
+            using (var query = EntityManager.CreateEntityQuery(ComponentType.ReadOnly<ServiceFeeParameterData>()))
+                parameters = query.GetSingleton<ServiceFeeParameterData>();
             DynamicBuffer<ServiceFee> fees = EntityManager.GetBuffer<ServiceFee>(city, isReadOnly: true);
             var result = new Dictionary<string, object>();
             foreach (PlayerResource resource in Enum.GetValues(typeof(PlayerResource)))
@@ -115,12 +119,15 @@ namespace CS2MCP
                 }
                 if (ServiceFeeSystem.TryGetFee(resource, fees, out float fee))
                 {
-                    int3 limits = feeSystem.GetServiceFees(resource);
+                    int3 totals = feeSystem.GetServiceFees(resource);
+                    FeeParameters limits = parameters.GetFeeParameters(resource);
                     result[resource.ToString()] = new
                     {
                         fee,
                         estimatedMonthlyIncome = feeSystem.GetServiceFeeIncomeEstimate(resource, fee),
-                        sliderRange = new { min = limits.x, max = limits.y, defaultValue = limits.z },
+                        sliderRange = new { min = 0, max = limits.m_Max, defaultValue = limits.m_Default },
+                        adjustable = resource != PlayerResource.Parking && limits.m_Adjustable,
+                        incomeInternal = totals.x, incomeExports = totals.y, expenseImports = -totals.z,
                     };
                 }
             }
@@ -138,15 +145,23 @@ namespace CS2MCP
                 return error;
             }
             if (!request.Query.TryGetValue("resource", out string resourceName)
-                || !Enum.TryParse(resourceName, ignoreCase: true, out PlayerResource resource))
+                || !Enum.TryParse(resourceName, ignoreCase: true, out PlayerResource resource)
+                || !Enum.IsDefined(typeof(PlayerResource), resource))
             {
                 return BridgeResponse.Error(400,
                     $"provide ?resource=<{string.Join("|", Enum.GetNames(typeof(PlayerResource)))}>");
             }
-            if (!request.TryGetFloat("fee", out float fee))
+            if (!request.TryGetFloat("fee", out float fee) || float.IsNaN(fee) || float.IsInfinity(fee))
             {
                 return BridgeResponse.Error(400, "provide ?fee=<float>");
             }
+            FeeParameters limits;
+            using (var query = EntityManager.CreateEntityQuery(ComponentType.ReadOnly<ServiceFeeParameterData>()))
+                limits = query.GetSingleton<ServiceFeeParameterData>().GetFeeParameters(resource);
+            if (resource == PlayerResource.Parking || !limits.m_Adjustable)
+                return BridgeResponse.Error(400, "fee is not adjustable in the native service panel; use the relevant facility or line settings");
+            if (fee < 0 || fee > limits.m_Max) return BridgeResponse.Error(400, $"fee must be within native range 0..{limits.m_Max}");
+            EntityManager.CompleteDependencyBeforeRW<ServiceFee>();
             DynamicBuffer<ServiceFee> fees = EntityManager.GetBuffer<ServiceFee>(city);
             if (!ServiceFeeSystem.TryGetFee(resource, fees, out float previous))
             {

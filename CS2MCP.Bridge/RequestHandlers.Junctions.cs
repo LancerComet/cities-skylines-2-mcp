@@ -1,6 +1,7 @@
 using System;
 using Game.Net;
 using Game.Prefabs;
+using Game.City;
 using Unity.Entities;
 
 namespace CS2MCP
@@ -16,6 +17,60 @@ namespace CS2MCP
             CompositionFlags.General.TrafficLights
             | CompositionFlags.General.RemoveTrafficLights
             | CompositionFlags.General.AllWayStop;
+
+        private const CompositionFlags.Side kTurnRestrictionFlags =
+            CompositionFlags.Side.ForbidLeftTurn | CompositionFlags.Side.ForbidRightTurn | CompositionFlags.Side.ForbidStraight;
+
+        // 原生工具将路段起点/终点转向标记存入左右字段；这不是路侧绿化的左右含义。
+        private object DescribeTurnRestrictions(Entity road)
+        {
+            if (!EntityManager.HasComponent<Edge>(road)) return null;
+            Edge edge = EntityManager.GetComponentData<Edge>(road);
+            CompositionFlags flags = EntityManager.HasComponent<Upgraded>(road) ? EntityManager.GetComponentData<Upgraded>(road).m_Flags : default;
+            bool leftHandTraffic = World.GetOrCreateSystemManaged<CityConfigurationSystem>().leftHandTraffic;
+            return new { leftHandTraffic, upgradeFlags = DescribeCompositionFlags(flags),
+                start = DescribeApproach(edge.m_Start, leftHandTraffic ? flags.m_Right : flags.m_Left),
+                end = DescribeApproach(edge.m_End, leftHandTraffic ? flags.m_Left : flags.m_Right),
+                note = "native turn signs; inspect junction CarLane flags/path owners to verify behavior, including Unsafe lanes and emergency access" };
+        }
+
+        private object DescribeApproach(Entity node, CompositionFlags.Side flags) => new {
+            node = Ref(node), forbidLeft = (flags & CompositionFlags.Side.ForbidLeftTurn) != 0,
+            forbidRight = (flags & CompositionFlags.Side.ForbidRightTurn) != 0,
+            forbidStraight = (flags & CompositionFlags.Side.ForbidStraight) != 0 };
+
+        private BridgeResponse SetTurnRestrictions(BridgeRequest request)
+        {
+            if (!TryGetCity(out _, out BridgeResponse error)) return error;
+            if (!request.Query.TryGetValue("road", out string rawRoad) || !TryParseEntityRef(rawRoad, out Entity road)
+                || !request.Query.TryGetValue("node", out string rawNode) || !TryParseEntityRef(rawNode, out Entity node))
+                return BridgeResponse.Error(400, "provide road=index:version and node=index:version from road graph");
+            if (!EntityManager.Exists(road) || !EntityManager.HasComponent<Road>(road) || !EntityManager.HasComponent<Edge>(road)
+                || EntityManager.HasComponent<Game.Common.Owner>(road) || EntityManager.HasComponent<Game.Common.Deleted>(road))
+                return BridgeResponse.Error(400, "road must be an existing standalone road edge");
+            Edge edge = EntityManager.GetComponentData<Edge>(road);
+            if ((node != edge.m_Start && node != edge.m_End) || !EntityManager.Exists(node)
+                || !EntityManager.HasBuffer<ConnectedEdge>(node))
+                return BridgeResponse.Error(400, "node must be a connected endpoint of this road");
+            int roads = 0;
+            foreach (ConnectedEdge connection in EntityManager.GetBuffer<ConnectedEdge>(node, true))
+                if (EntityManager.HasComponent<Road>(connection.m_Edge)) roads++;
+            if (roads < 3) return BridgeResponse.Error(400, "turn signs require an intersection with at least 3 roads");
+            if (!request.TryGetBool("forbidLeft", out bool left) || !request.TryGetBool("forbidRight", out bool right)
+                || !request.TryGetBool("forbidStraight", out bool straight))
+                return BridgeResponse.Error(400, "provide all three boolean turn restrictions; false restores that movement");
+            if (left && right && straight) return BridgeResponse.Error(400, "refusing to forbid all approach movements");
+            CompositionFlags flags = EntityManager.HasComponent<Upgraded>(road) ? EntityManager.GetComponentData<Upgraded>(road).m_Flags : default;
+            CompositionFlags.Side add = (left ? CompositionFlags.Side.ForbidLeftTurn : 0)
+                | (right ? CompositionFlags.Side.ForbidRightTurn : 0) | (straight ? CompositionFlags.Side.ForbidStraight : 0);
+            bool leftHandTraffic = World.GetOrCreateSystemManaged<CityConfigurationSystem>().leftHandTraffic;
+            bool useLeftField = (node == edge.m_Start) != leftHandTraffic;
+            if (useLeftField) flags.m_Left = (flags.m_Left & ~kTurnRestrictionFlags) | add;
+            else flags.m_Right = (flags.m_Right & ~kTurnRestrictionFlags) | add;
+            if (!World.GetOrCreateSystemManaged<BridgeToolSystem>().TryQueueUpgrade(road, "native turn restrictions", flags, request))
+                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+            return null;
+        }
 
         private BridgeResponse SetJunctionControl(BridgeRequest request)
         {

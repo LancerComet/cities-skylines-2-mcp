@@ -33,7 +33,8 @@ namespace CS2MCP
         {
             value = 0f;
             return Query.TryGetValue(key, out string raw)
-                && float.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+                && float.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+                && !float.IsNaN(value) && !float.IsInfinity(value);
         }
 
         public bool TryGetBool(string key, out bool value)
@@ -69,9 +70,9 @@ namespace CS2MCP
             };
         }
 
-        public static BridgeResponse Error(int status, string message)
+        public static BridgeResponse Error(int status, string message, bool mayHaveApplied = false)
         {
-            return Json(new { error = message }, status);
+            return Json(new { error = message, mayHaveApplied }, status);
         }
 
         public static BridgeResponse Png(byte[] png)

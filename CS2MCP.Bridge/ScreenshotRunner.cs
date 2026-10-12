@@ -1,18 +1,48 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace CS2MCP
 {
     /// <summary>
-    /// MonoBehaviour helper that captures the screen at WaitForEndOfFrame —
-    /// the only point in the frame where Unity reliably allows reading the
-    /// back buffer (calling ScreenCapture from a system update returns null).
+    /// 仅读取Unity已完成的游戏帧，不读取桌面，不主动重复Camera.Render。
+    /// 隐藏窗口没有可用游戏帧时拒绝截图；不以存档预览的八次渲染补偿。
     /// Completes the BridgeRequest itself, so the handler returns no response.
     /// </summary>
     public sealed class ScreenshotRunner : MonoBehaviour
     {
         private static ScreenshotRunner s_Instance;
+        private sealed class DeferredSaveTextures
+        {
+            public System.Threading.Tasks.Task Pending;
+            public Texture2D Captured, Preview;
+        }
+        private readonly List<DeferredSaveTextures> m_DeferredSaveTextures = new List<DeferredSaveTextures>();
+
+        // 协程中断不能销毁原生保存仍在借用的纹理；在Unity主线程等待借用结束后释放。
+        private void Update()
+        {
+            for (int i = m_DeferredSaveTextures.Count - 1; i >= 0; i--) {
+                var cleanup = m_DeferredSaveTextures[i];
+                if (!cleanup.Pending.IsCompleted) continue;
+                _ = cleanup.Pending.Exception; // 观察任务异常，不触发未观察异常回调。
+                ReleaseSaveTextures(cleanup.Captured, cleanup.Preview);
+                m_DeferredSaveTextures.RemoveAt(i);
+            }
+        }
+
+        private static void ReleaseSaveTextures(Texture2D captured, Texture2D preview)
+        {
+            if (preview != null && !ReferenceEquals(preview, captured)) Destroy(preview);
+            if (captured != null) Destroy(captured);
+        }
+
+        private static bool HasUsableGameFrame()
+        {
+            return Application.isFocused && Camera.main != null && Screen.width >= 320 && Screen.height >= 200
+                && Screen.width <= 8192 && Screen.height <= 8192;
+        }
 
         public static ScreenshotRunner Ensure()
         {
@@ -30,7 +60,104 @@ namespace CS2MCP
 
         public void Capture(BridgeRequest request)
         {
+            // 隐藏窗口可能不产生EndOfFrame；先拒绝，避免留下永远等帧的请求。
+            if (!HasUsableGameFrame()) {
+                request.Complete(BridgeResponse.Error(409, "当前没有可核验游戏帧；不能在隐藏后台截图"));
+                return;
+            }
             StartCoroutine(CaptureRoutine(request));
+        }
+
+        public void Save(BridgeRequest request, string name, bool includePreview)
+        {
+            if (includePreview && !HasUsableGameFrame()) {
+                request.Complete(BridgeResponse.Json(new { error = "后台保存应显式includePreview=false，原生保存未启动",
+                    mayHaveApplied = false, safeToRetry = false, failurePhase = "before_native_save" }, 409));
+                return;
+            }
+            StartCoroutine(SaveRoutine(request, name, includePreview));
+        }
+
+        private IEnumerator SaveRoutine(BridgeRequest request, string name, bool includePreview)
+        {
+            Texture2D captured = null;
+            Texture2D preview = null;
+            System.Threading.Tasks.Task<bool> pendingSave = null;
+            bool nativeSaveStarted = false;
+            bool reported = false;
+            try {
+              if (includePreview) yield return new WaitForEndOfFrame();
+              else yield return null;
+              try {
+                if (includePreview) {
+                    if (!Application.isFocused || Camera.main == null || Screen.width < 320 || Screen.height < 200
+                        || Screen.width > 8192 || Screen.height > 8192)
+                        throw new InvalidOperationException("当前没有可用游戏帧；后台保存请使用includePreview=false");
+                    captured = ScreenCapture.CaptureScreenshotAsTexture();
+                    if (captured == null) throw new InvalidOperationException("无法获取游戏预览帧；后台保存请使用includePreview=false");
+                    // 原生纹理导入为RGBA32；在异步GPU读回结束前保留纹理。
+                    preview = Downscale(captured, 680, TextureFormat.RGBA32);
+                }
+                var completion = new System.Threading.Tasks.TaskCompletionSource<bool>();
+                pendingSave = completion.Task;
+                // 与原生自动保存/菜单保存共用队列；cap=1忙时会静默丢弃本请求，必须使用cap=0。
+                // 队列入口Task可能提前完成且吞掉委托异常，本请求的完成/取消/故障由独立TCS传递。
+                try {
+                    _ = Colossal.TaskManager.instance.EnqueueTask("SaveLoadGame", async () => {
+                        try {
+                            var world = Unity.Entities.World.DefaultGameObjectInjectionWorld;
+                            var menu = world?.GetExistingSystemManaged<Game.UI.Menu.MenuUISystem>();
+                            if (menu == null) throw new InvalidOperationException("原生保存菜单未就绪");
+                            var manager = Game.SceneFlow.GameManager.instance;
+                            if (manager == null) throw new InvalidOperationException("原生保存管理器未就绪");
+                            // metadata与序列化都在本请求轮到后读取，不能入队前获取旧城市状态。
+                            var saveInfo = menu.GetSaveInfo(autoSave: false);
+                            nativeSaveStarted = true;
+                            // null预览仍正常序列化与打包；隐藏窗口不额外渲染或复用旧缩略图。
+                            bool result = includePreview
+                                ? await manager.Save(name, saveInfo, Colossal.IO.AssetDatabase.AssetDatabase.user, preview)
+                                : await manager.Save(name, saveInfo, Colossal.IO.AssetDatabase.AssetDatabase.user, (Game.UI.ScreenCaptureHelper.AsyncRequest)null);
+                            completion.TrySetResult(result);
+                        } catch (OperationCanceledException) {
+                            completion.TrySetCanceled();
+                        } catch (Exception e) {
+                            completion.TrySetException(e);
+                        }
+                    }, 0);
+                } catch (Exception e) {
+                    completion.TrySetException(e);
+                }
+            } catch (Exception e) {
+                request.Complete(BridgeResponse.Json(new { error = $"保存未启动：{e.GetType().Name}: {e.Message}",
+                    mayHaveApplied = false, safeToRetry = false, failurePhase = "before_native_save" }, 500));
+                reported = true;
+            }
+            // 纹理在原生异步GPU读回完成前保留，随后释放；不在异步任务期间再次渲染相机。
+            if (pendingSave != null) {
+                while (!pendingSave.IsCompleted) yield return null;
+                if (pendingSave.IsFaulted || pendingSave.IsCanceled) {
+                    // 明确读取Exception使任务异常已观察，不交给全局UnobservedTaskException弹窗。
+                    var failure = pendingSave.Exception?.GetBaseException();
+                    request.Complete(BridgeResponse.Json(new { error = $"{(nativeSaveStarted ? "原生保存管线失败" : "保存未启动")}：{failure?.GetType().Name ?? "Canceled"}；读取主档与日志，不能盲重试",
+                        mayHaveApplied = nativeSaveStarted, safeToRetry = false,
+                        failurePhase = nativeSaveStarted ? "native_save_pipeline" : "before_native_save" }, 500));
+                }
+                else request.Complete(BridgeResponse.Json(new { name, pipelineCompleted = true, previewIncluded = includePreview,
+                    note = "原生异步保存管线已结束；仍须核文件更新时间、完整性及独立备份，不以原生Task返回值宣称落盘成功" }));
+                reported = true;
+            }
+            } finally {
+                if (pendingSave != null && !pendingSave.IsCompleted) {
+                    m_DeferredSaveTextures.Add(new DeferredSaveTextures { Pending = pendingSave, Captured = captured, Preview = preview });
+                } else {
+                    if (pendingSave != null) _ = pendingSave.Exception;
+                    ReleaseSaveTextures(captured, preview);
+                }
+                if (!reported) request.Complete(BridgeResponse.Json(new { error = "保存协程已中断；核对实际主档，不能盲重试",
+                    mayHaveApplied = nativeSaveStarted || (pendingSave != null && !pendingSave.IsCompleted), safeToRetry = false,
+                    failurePhase = nativeSaveStarted ? "native_save_interrupted"
+                        : pendingSave != null && !pendingSave.IsCompleted ? "native_save_queued_interrupted" : "before_native_save" }, 503));
+            }
         }
 
         private IEnumerator CaptureRoutine(BridgeRequest request)
@@ -39,16 +166,14 @@ namespace CS2MCP
 
             Texture2D captured = null;
             Texture2D output = null;
+            RenderTexture previousTarget = RenderTexture.active;
             try
             {
+                if (!Application.isFocused || Camera.main == null || Screen.width < 320 || Screen.height < 200
+                    || Screen.width > 8192 || Screen.height > 8192)
+                    throw new InvalidOperationException("游戏没有可核实的前台渲染帧；先恢复游戏窗口再截图");
                 captured = ScreenCapture.CaptureScreenshotAsTexture();
-                if (captured == null)
-                {
-                    // Fallback: read the back buffer directly.
-                    captured = new Texture2D(Screen.width, Screen.height, TextureFormat.RGB24, false);
-                    captured.ReadPixels(new Rect(0, 0, Screen.width, Screen.height), 0, 0);
-                    captured.Apply();
-                }
+                if (captured == null) throw new InvalidOperationException("游戏帧捕获失败");
 
                 output = captured;
                 if (request.TryGetInt("width", out int width) && width > 0 && width < captured.width)
@@ -72,6 +197,7 @@ namespace CS2MCP
             }
             finally
             {
+                RenderTexture.active = previousTarget;
                 if (output != null && !ReferenceEquals(output, captured))
                 {
                     Destroy(output);
@@ -83,19 +209,26 @@ namespace CS2MCP
             }
         }
 
-        private static Texture2D Downscale(Texture2D source, int targetWidth)
+        private static Texture2D Downscale(Texture2D source, int targetWidth, TextureFormat format = TextureFormat.RGB24)
         {
             int targetHeight = Mathf.Max(1, Mathf.RoundToInt((float)source.height * targetWidth / source.width));
             RenderTexture rt = RenderTexture.GetTemporary(targetWidth, targetHeight, 0);
             RenderTexture previous = RenderTexture.active;
+            Texture2D result = null;
             try
             {
                 Graphics.Blit(source, rt);
                 RenderTexture.active = rt;
-                var result = new Texture2D(targetWidth, targetHeight, TextureFormat.RGB24, false);
+                result = new Texture2D(targetWidth, targetHeight, format, false);
                 result.ReadPixels(new Rect(0, 0, targetWidth, targetHeight), 0, 0);
                 result.Apply();
                 return result;
+            }
+            catch
+            {
+                // 返回前的纹理由本方法持有；成功返回后仍由截图/保存调用方释放。
+                if (result != null) Destroy(result);
+                throw;
             }
             finally
             {
