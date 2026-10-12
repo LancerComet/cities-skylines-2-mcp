@@ -40,7 +40,7 @@ function validateRoadPath(segments:z.infer<typeof roadPathSegment>[]) {
   }
 }
 
-const server = new McpServer({ name: "cs2-mcp", version: "0.10.3" });
+const server = new McpServer({ name: "cs2-mcp", version: "0.10.4" });
 
 server.registerTool("cs2_facility_parking_fees", {
   title: "读取全部公共设施停车费",
@@ -1112,7 +1112,7 @@ server.registerTool(
   {
     title: "Save the game",
     description:
-      "经原生保存流程完成后返回；后台隐藏时includePreview=false省略缩略图，不额外渲染或恢复前台。调用后仍须核文件落盘、内层GUID和备份。 " +
+      "0.10.4起与原生自动/手动保存共用队列，轮到后读取保存信息并等待本请求原生管线结束；后台隐藏时includePreview=false省略缩略图，不额外渲染或恢复前台。调用后仍须核文件落盘、内层GUID和备份。 " +
       "Default name is timestamped 'CS2MCP ...'.",
     inputSchema: {
       name: z.string().optional().describe("Save name (default: timestamped)"),
@@ -2006,4 +2006,4 @@ server.registerTool(
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error(`cs2-mcp 0.10.3 running on stdio (bridge: ${BRIDGE_URL})`);
+console.error(`cs2-mcp 0.10.4 running on stdio (bridge: ${BRIDGE_URL})`);

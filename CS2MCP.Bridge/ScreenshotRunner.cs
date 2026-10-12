@@ -83,6 +83,7 @@ namespace CS2MCP
             Texture2D captured = null;
             Texture2D preview = null;
             System.Threading.Tasks.Task<bool> pendingSave = null;
+            bool nativeSaveStarted = false;
             bool reported = false;
             try {
               if (includePreview) yield return new WaitForEndOfFrame();
@@ -97,14 +98,35 @@ namespace CS2MCP
                     // 原生纹理导入为RGBA32；在异步GPU读回结束前保留纹理。
                     preview = Downscale(captured, 680, TextureFormat.RGBA32);
                 }
-                var world = Unity.Entities.World.DefaultGameObjectInjectionWorld;
-                var menu = world?.GetExistingSystemManaged<Game.UI.Menu.MenuUISystem>();
-                if (menu == null) throw new InvalidOperationException("原生保存菜单未就绪");
-                // GameManager.Save的原生AsyncRequest重载明确支持null：仍正常序列化与打包，省略预览资产。
-                // 隐藏窗口不强制渲染，也不拿旧缩略图冒充当前城市画面。
-                pendingSave = includePreview
-                    ? Game.SceneFlow.GameManager.instance.Save(name, menu.GetSaveInfo(autoSave: false), Colossal.IO.AssetDatabase.AssetDatabase.user, preview)
-                    : Game.SceneFlow.GameManager.instance.Save(name, menu.GetSaveInfo(autoSave: false), Colossal.IO.AssetDatabase.AssetDatabase.user, (Game.UI.ScreenCaptureHelper.AsyncRequest)null);
+                var completion = new System.Threading.Tasks.TaskCompletionSource<bool>();
+                pendingSave = completion.Task;
+                // 与原生自动保存/菜单保存共用队列；cap=1忙时会静默丢弃本请求，必须使用cap=0。
+                // 队列入口Task可能提前完成且吞掉委托异常，本请求的完成/取消/故障由独立TCS传递。
+                try {
+                    _ = Colossal.TaskManager.instance.EnqueueTask("SaveLoadGame", async () => {
+                        try {
+                            var world = Unity.Entities.World.DefaultGameObjectInjectionWorld;
+                            var menu = world?.GetExistingSystemManaged<Game.UI.Menu.MenuUISystem>();
+                            if (menu == null) throw new InvalidOperationException("原生保存菜单未就绪");
+                            var manager = Game.SceneFlow.GameManager.instance;
+                            if (manager == null) throw new InvalidOperationException("原生保存管理器未就绪");
+                            // metadata与序列化都在本请求轮到后读取，不能入队前获取旧城市状态。
+                            var saveInfo = menu.GetSaveInfo(autoSave: false);
+                            nativeSaveStarted = true;
+                            // null预览仍正常序列化与打包；隐藏窗口不额外渲染或复用旧缩略图。
+                            bool result = includePreview
+                                ? await manager.Save(name, saveInfo, Colossal.IO.AssetDatabase.AssetDatabase.user, preview)
+                                : await manager.Save(name, saveInfo, Colossal.IO.AssetDatabase.AssetDatabase.user, (Game.UI.ScreenCaptureHelper.AsyncRequest)null);
+                            completion.TrySetResult(result);
+                        } catch (OperationCanceledException) {
+                            completion.TrySetCanceled();
+                        } catch (Exception e) {
+                            completion.TrySetException(e);
+                        }
+                    }, 0);
+                } catch (Exception e) {
+                    completion.TrySetException(e);
+                }
             } catch (Exception e) {
                 request.Complete(BridgeResponse.Json(new { error = $"保存未启动：{e.GetType().Name}: {e.Message}",
                     mayHaveApplied = false, safeToRetry = false, failurePhase = "before_native_save" }, 500));
@@ -116,8 +138,9 @@ namespace CS2MCP
                 if (pendingSave.IsFaulted || pendingSave.IsCanceled) {
                     // 明确读取Exception使任务异常已观察，不交给全局UnobservedTaskException弹窗。
                     var failure = pendingSave.Exception?.GetBaseException();
-                    request.Complete(BridgeResponse.Json(new { error = $"原生保存管线失败：{failure?.GetType().Name ?? "Canceled"}；读取主档与日志，不能盲重试",
-                        mayHaveApplied = true, safeToRetry = false, failurePhase = "native_save_pipeline" }, 500));
+                    request.Complete(BridgeResponse.Json(new { error = $"{(nativeSaveStarted ? "原生保存管线失败" : "保存未启动")}：{failure?.GetType().Name ?? "Canceled"}；读取主档与日志，不能盲重试",
+                        mayHaveApplied = nativeSaveStarted, safeToRetry = false,
+                        failurePhase = nativeSaveStarted ? "native_save_pipeline" : "before_native_save" }, 500));
                 }
                 else request.Complete(BridgeResponse.Json(new { name, pipelineCompleted = true, previewIncluded = includePreview,
                     note = "原生异步保存管线已结束；仍须核文件更新时间、完整性及独立备份，不以原生Task返回值宣称落盘成功" }));
@@ -131,8 +154,9 @@ namespace CS2MCP
                     ReleaseSaveTextures(captured, preview);
                 }
                 if (!reported) request.Complete(BridgeResponse.Json(new { error = "保存协程已中断；核对实际主档，不能盲重试",
-                    mayHaveApplied = pendingSave != null, safeToRetry = false,
-                    failurePhase = pendingSave != null ? "native_save_interrupted" : "before_native_save" }, 503));
+                    mayHaveApplied = nativeSaveStarted || (pendingSave != null && !pendingSave.IsCompleted), safeToRetry = false,
+                    failurePhase = nativeSaveStarted ? "native_save_interrupted"
+                        : pendingSave != null && !pendingSave.IsCompleted ? "native_save_queued_interrupted" : "before_native_save" }, 503));
             }
         }
 
