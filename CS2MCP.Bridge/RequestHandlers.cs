@@ -69,6 +69,8 @@ namespace CS2MCP
                     return GetTaxes();
                 case "/city/taxes/set":
                     return HandleSetTax(request);
+                case "/city/taxes/resource":
+                    return HandleResourceTax(request);
                 case "/city/policies":
                     return GetPolicies();
                 case "/city/policies/set":
@@ -161,6 +163,8 @@ namespace CS2MCP
                     return RoadGraph(request);
                 case "/build/road/replace":
                     return ReplaceRoad(request);
+                case "/build/net/replace":
+                    return ReplaceNet(request);
                 case "/build/road/connect":
                     return ConnectRoad(request);
                 case "/build/place/shoreline":
@@ -179,6 +183,32 @@ namespace CS2MCP
                     return ListLineVehicles(request);
                 case "/transit/lines/vehicles/set":
                     return SetLineVehicles(request);
+                case "/transit/routes/create":
+                    return CreateRoute(request);
+                case "/city/production":
+                    return GetProduction(request);
+                case "/city/resources":
+                    return GetNaturalResources(request);
+                case "/build/specialized-area/list":
+                    return ListSpecializedAreas(request);
+                case "/build/specialized-area":
+                    return PlaceSpecializedArea(request);
+                    case "/build/grid":
+                        return BuildGrid(request);
+                    case "/build/grid/status":
+                        return GridStatus(request);
+                    case "/build/grid/cancel":
+                        return GridCancel(request);
+                    case "/build/tools/status":
+                        return ToolStatus(request);
+                        case "/build/district/reshape":
+                            return ReshapeDistrict(request);
+                        case "/build/district/rename":
+                            return RenameDistrict(request);
+                        case "/build/district/delete":
+                            return DeleteDistrict(request);
+                        case "/districts/detail":
+                            return DistrictDetail(request);
                 default:
                     return BridgeResponse.Error(404,
                         $"unknown endpoint: {request.Path}; available: /ping /state /city/overview /city/demand " +

@@ -395,6 +395,9 @@ namespace CS2MCP
                 ["lighting"] = (Game.Prefabs.CompositionFlags.General.Lighting, default),
                 ["medianGrass"] = (Game.Prefabs.CompositionFlags.General.PrimaryMiddleBeautification, default),
                 ["medianTrees"] = (Game.Prefabs.CompositionFlags.General.SecondaryMiddleBeautification, default),
+                ["tram"] = (default, Game.Prefabs.CompositionFlags.Side.PrimaryTrack),
+                ["tramSecondary"] = (default, Game.Prefabs.CompositionFlags.Side.SecondaryTrack),
+                ["tramStop"] = (default, Game.Prefabs.CompositionFlags.Side.PrimaryStop),
             };
 
         private BridgeResponse HandleUpgradeRoad(BridgeRequest request)

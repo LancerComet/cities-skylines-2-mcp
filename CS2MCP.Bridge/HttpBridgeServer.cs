@@ -313,8 +313,15 @@ namespace CS2MCP
                 int equals = pair.IndexOf('=');
                 string key = equals < 0 ? pair : pair.Substring(0, equals);
                 string value = equals < 0 ? "" : pair.Substring(equals + 1);
-                request.Query[Uri.UnescapeDataString(key)] = Uri.UnescapeDataString(value);
+                request.Query[DecodeQueryComponent(key)] = DecodeQueryComponent(value);
             }
+        }
+
+        // Form encoding: '+' is a space. URLSearchParams sends spaces as '+' and a
+        // literal '+' as %2B, but Uri.UnescapeDataString leaves '+' as it is.
+        private static string DecodeQueryComponent(string component)
+        {
+            return Uri.UnescapeDataString(component.Replace('+', ' '));
         }
 
         private static void WriteResponse(NetworkStream stream, BridgeResponse response)

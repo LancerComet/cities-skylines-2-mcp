@@ -309,6 +309,31 @@ server.registerTool(
   },
 );
 
+server.registerTool(
+  "cs2_resource_tax",
+  {
+    title: "Industrial tax rate per resource",
+    description:
+      "Read or set the industrial tax rate of one produced resource (the per-resource sliders in the Taxes " +
+      "panel), e.g. Minerals. Give only a resource to read it, add rate to set it (clamped to the game range). " +
+      "Without a resource, lists every resource's rate. A lower rate attracts more companies making that resource.",
+    inputSchema: {
+      resource: z.string().optional().describe("Resource name from cs2_production, e.g. Minerals"),
+      rate: z.number().int().optional().describe("New tax rate in percent; omit to only read"),
+    },
+  },
+  async ({ resource, rate }) => {
+    try {
+      const q = new URLSearchParams();
+      if (resource !== undefined) q.set("resource", resource);
+      if (rate !== undefined) q.set("rate", String(rate));
+      return jsonResult(await bridgeJson(`/city/taxes/resource?${q.toString()}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
 registerJsonTool(
   "cs2_policies",
   "List city policies",
@@ -540,7 +565,8 @@ server.registerTool(
     title: "Upgrade a road segment",
     description:
       "Apply upgrades to an existing road segment (from cs2_list_roads): grass, trees, wideSidewalk, " +
-      "soundBarrier, parking, lighting, medianGrass, medianTrees. Combine multiple with commas. " +
+      "soundBarrier, parking, lighting, medianGrass, medianTrees, tram, tramSecondary, tramStop (tram track and stop " +
+      "flags; not yet verified in game). Combine multiple with commas. " +
       "The segment is recreated with the new composition via the game's tool pipeline.",
     inputSchema: {
       index: z.number().int().describe("Road segment entity index"),
@@ -1119,6 +1145,190 @@ server.registerTool(
 );
 
 server.registerTool(
+  "cs2_create_route",
+  {
+    title: "Create an airplane line or cargo route",
+    description:
+      "Create a passenger airplane line, or a cargo route for airplanes, trains or ships, like the game's Passenger " +
+      "Airplane Line / Cargo Airplane Route / Cargo Train Route / Cargo Ship Route tools. Stops are entity ids in order: " +
+      "airport passenger gates or cargo stands, cargo train terminals or harbours (or the building containing them), and " +
+      "outside connections (find all of them with cs2_list_transit_stops; outside connections serve passengers and " +
+      "cargo). The route loops back to the first stop. Airplanes need no depot; cargo trains come from a rail yard.",
+    inputSchema: {
+      type: z.enum(["airplane", "train", "ship"]).describe("Transport type"),
+      cargo: z.boolean().describe("true = cargo route, false = passenger line (passenger only for airplane here)"),
+      stops: z.array(z.object({ index: z.number().int(), version: z.number().int() })).min(2).max(100).describe("Ordered stops"),
+      name: z.string().max(64).optional().describe("Custom route name"),
+      color: z.string().regex(/^#?[0-9a-fA-F]{6}$/).optional().describe("Route color as #RRGGBB"),
+      force: z.boolean().optional().describe("Create even if this route type is milestone-locked"),
+    },
+  },
+  async ({ type, cargo, stops, name, color, force }) => {
+    const params = new URLSearchParams({
+      type,
+      cargo: String(cargo),
+      stops: stops.map((s) => `${s.index}:${s.version}`).join(";"),
+    });
+    if (name) params.set("name", name);
+    if (color) params.set("color", color.startsWith("#") ? color : `#${color}`);
+    if (force) params.set("force", "true");
+    try {
+      return jsonResult(await bridgeJson(`/transit/routes/create?${bridgeQueryString(params)}`, 30_000));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_production",
+  {
+    title: "Production by resource",
+    description:
+      "The Economy panel's Production tab for every resource: city production, consumption (company inputs, households, " +
+      "industry/commerce/offices, service upkeep, heating, building level-up), balance (surplus or deficit), " +
+      "import/export, stored amount and production capacity, plus the biggest deficits and surpluses. " +
+      "Use to find what the city imports and which specialized industry to build. Rates refresh 32 times per in-game day.",
+    inputSchema: {
+      resource: z.string().optional().describe("Only this resource (e.g. Oil, Grain, Wood)"),
+      includeIdle: z.boolean().optional().describe("Also list resources with no production, consumption or trade"),
+    },
+  },
+  async ({ resource, includeIdle }) => {
+    const params = new URLSearchParams();
+    if (resource) params.set("resource", resource);
+    if (includeIdle) params.set("includeIdle", "true");
+    try {
+      return jsonResult(await bridgeJson(`/city/production?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_resources",
+  {
+    title: "Natural resource map",
+    description:
+      "Grid of natural resources over the whole map (row-major by z, like cs2_gridmap): fertility, ore, oil and fish " +
+      "from the game's natural-resource cell map (available = base - used), or forest as harvestable wood summed from " +
+      "trees. Also returns totals and the richest clusters with their center and bounding box, to pick where to place " +
+      "specialized industry (check tile ownership with cs2_list_map_tiles).",
+    inputSchema: {
+      resource: z.enum(["fertility", "ore", "oil", "fish", "forest"]).describe("Which natural resource"),
+      resolution: z.number().int().min(8).max(256).optional().describe("Output grid size per side (default 64)"),
+      threshold: z.number().min(0.01).max(1).optional().describe("Cluster cut-off as a fraction of the richest cell (default 0.25)"),
+      clusters: z.number().int().min(0).max(50).optional().describe("How many clusters to return (default 10)"),
+    },
+  },
+  async ({ resource, resolution, threshold, clusters }) => {
+    const params = new URLSearchParams({ resource });
+    if (resolution) params.set("resolution", String(resolution));
+    if (threshold !== undefined) params.set("threshold", String(threshold));
+    if (clusters !== undefined) params.set("clusters", String(clusters));
+    try {
+      return jsonResult(await bridgeJson(`/city/resources?${bridgeQueryString(params)}`, 30_000));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_specialized_area",
+  {
+    title: "Specialized industry",
+    description:
+      "Specialized industry (agriculture, forestry, ore, oil, fish) like the game: list=true lists the extractor " +
+      "placeholder buildings (with their area prefabs and resource) and the city's existing extractor areas with their " +
+      "owner building. With type (+variant, e.g. Grain, Livestock, Coal, Stone, Water, Land), road and side it places the " +
+      "placeholder building flush against the road; the game creates its extractor area and a company moves in. With " +
+      "points it then redraws that area as the polygon, like the game's area tool. area or building + points redraws an " +
+      "existing extractor area. Placement attaches the extractor building the game itself would pick; owner.broken in the listing marks placeholders from the old tool that have none (demolish and place again). The game checks the shape (no self-intersection), overlap and the maximum distance of " +
+      "each corner from the building, and refuses invalid polygons. Industrial zoning does not create these.",
+    inputSchema: {
+      list: z.boolean().optional().describe("Only list placeholders and existing extractor areas"),
+      type: z.enum(["agriculture", "forestry", "ore", "oil", "fish"]).optional().describe("Industry type for a new placement"),
+      variant: z.string().optional().describe("Part of the placeholder name when a type has several"),
+      road: z.object({ index: z.number().int(), version: z.number().int() }).optional().describe("Road segment (cs2_road_graph)"),
+      side: z.enum(["left", "right"]).optional().describe("Side of the road, as seen from the segment's start"),
+      t: z.number().min(0).max(1).optional().describe("Position along the segment (default 0.5)"),
+      points: z
+        .array(z.object({ x: z.number(), z: z.number() }))
+        .min(3)
+        .max(64)
+        .optional()
+        .describe("Area polygon corners in world meters, in order"),
+      area: z.object({ index: z.number().int(), version: z.number().int() }).optional().describe("Existing extractor area to redraw"),
+      building: z
+        .object({ index: z.number().int(), version: z.number().int() })
+        .optional()
+        .describe("Specialized-industry building whose extractor area to redraw"),
+      dryRun: z.boolean().optional().describe("Only compute the placement position and rotation"),
+      force: z.boolean().optional().describe("Place even if milestone-locked"),
+    },
+  },
+  async ({ list, type, variant, road, side, t, points, area, building, dryRun, force }) => {
+    const pointsParam = points ? points.map((p) => `${p.x},${p.z}`).join(";") : undefined;
+    const reshape = async (target: URLSearchParams) => {
+      target.set("points", pointsParam!);
+      return bridgeJson(`/build/specialized-area?${bridgeQueryString(target)}`, 15_000);
+    };
+    try {
+      if (pointsParam && (area || building)) {
+        const params = new URLSearchParams();
+        if (area) params.set("area", `${area.index}:${area.version}`);
+        else if (building) params.set("building", `${building.index}:${building.version}`);
+        return jsonResult(await reshape(params));
+      }
+      if (list || !type) {
+        return jsonResult(await bridgeJson(`/build/specialized-area/list`));
+      }
+      if (!road || !side) {
+        throw new Error("road and side are required to place specialized industry");
+      }
+      const params = new URLSearchParams({ type, road: `${road.index}:${road.version}`, side });
+      if (variant) params.set("variant", variant);
+      if (t !== undefined) params.set("t", String(t));
+      if (dryRun) params.set("dryRun", "true");
+      if (force) params.set("force", "true");
+      const placed = (await bridgeJson(`/build/specialized-area?${bridgeQueryString(params)}`, 15_000)) as {
+        position?: { x: number; z: number };
+      };
+      if (!pointsParam || dryRun || !placed.position) {
+        return jsonResult(placed);
+      }
+      // Step 2: find the new building's extractor area (the game creates it on apply), then redraw it.
+      const at = placed.position;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const listing = (await bridgeJson(`/build/specialized-area/list`)) as {
+          existingAreas?: Array<{
+            entity: { index: number; version: number };
+            owner?: { position?: { x: number; z: number } };
+          }>;
+        };
+        const match = (listing.existingAreas ?? []).find(
+          (a) => a.owner?.position && Math.hypot(a.owner.position.x - at.x, a.owner.position.z - at.z) < 8,
+        );
+        if (match) {
+          const reshaped = await reshape(new URLSearchParams({ area: `${match.entity.index}:${match.entity.version}` }));
+          return jsonResult({ placed, reshaped });
+        }
+      }
+      return jsonResult({
+        placed,
+        reshaped: null,
+        note: "placed, but its extractor area was not found within 5 s; redraw later with area/building + points",
+      });
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
   "cs2_list_transit_lines",
   {
     title: "List public transport lines",
@@ -1522,6 +1732,44 @@ server.registerTool(
 );
 
 server.registerTool(
+  "cs2_replace_net",
+  {
+    title: "Replace network type",
+    description:
+      "Upgrade existing net segments in place to another prefab of the same family, like the game's upgrade/" +
+      "replace tool, keeping geometry and junctions. Works for roads AND tracks: e.g. 'Twoway Train Track' -> " +
+      "'Double Train Track', or subway tracks. The target must be the same family as every segment (road to road, " +
+      "train to train, subway to subway); if any segment is invalid nothing is changed and per-segment errors are " +
+      "returned. Max 30 segments per call. dryRun=true validates and lists the planned replacements only.",
+    inputSchema: {
+      nets: z
+        .array(z.object({ index: z.number().int(), version: z.number().int() }))
+        .min(1)
+        .max(30)
+        .describe("Net segments to replace (from cs2_list_roads, cs2_road_graph or cs2_traffic)"),
+      prefab: z.string().describe("New net prefab name (cs2_find_prefabs category net)"),
+      dryRun: z.boolean().optional().describe("Validate only; list what would be replaced"),
+      invert: z.boolean().optional().describe("Flip the drawing direction"),
+      force: z.boolean().optional().describe("Use the prefab even if it is milestone-locked"),
+    },
+  },
+  async ({ nets, prefab, dryRun, invert, force }) => {
+    const params = new URLSearchParams({
+      nets: nets.map((r) => `${r.index}:${r.version}`).join(";"),
+      prefab,
+    });
+    if (dryRun) params.set("dryRun", "true");
+    if (invert !== undefined) params.set("invert", String(invert));
+    if (force) params.set("force", "true");
+    try {
+      return jsonResult(await bridgeJson(`/build/net/replace?${bridgeQueryString(params)}`, 15_000));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
   "cs2_line_policies",
   {
     title: "Transit line policies",
@@ -1646,6 +1894,196 @@ server.registerTool(
     if (force !== undefined) params.set("force", String(force));
     try {
       return jsonResult(await bridgeJson(`/transit/lines/vehicles/set?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_build_grid",
+  {
+    title: "Build a street grid (server-side job)",
+    description:
+      "Lay out a whole street grid, optionally with zoning, in ONE call instead of hundreds of paced cs2_connect_road " +
+      "calls. Returns a job id at once; the game builds the pieces one at a time through the same path as " +
+      "cs2_connect_road (snapped ends) while staying out of the way of other build requests. Follow with " +
+      "cs2_grid_status, stop with cs2_cancel_grid. N-S streets sit at each x (spacing dx or list xs) and run between " +
+      "consecutive z lines; E-W streets sit at each z (dz or zs). Line type: majorX/majorZ coordinates use major, " +
+      "every mediumEvery-th line (index 0, N, 2N...) uses medium, all others minor. exclude circles skip any piece " +
+      "with a sample point inside (and their zoning). skipExisting skips edges already covered by a road within 9 m. " +
+      "water=bridge turns water crossings into ramp/bridge/ramp (elevation 5), water=skip (default) leaves them out. " +
+      "zone zones the roadside cells after the roads are built (never touching occupied cells). Always try dryRun " +
+      "first on a big area. Costs money like player builds; do not save the game while a job runs.",
+    inputSchema: {
+      x0: z.number().describe("West bound X"),
+      z0: z.number().describe("South bound Z"),
+      x1: z.number().describe("East bound X"),
+      z1: z.number().describe("North bound Z"),
+      dx: z.number().min(8).optional().describe("N-S street spacing in meters (or give xs)"),
+      dz: z.number().min(8).optional().describe("E-W street spacing in meters (or give zs)"),
+      xs: z.array(z.number()).optional().describe("Explicit X coordinates of the N-S streets (instead of dx)"),
+      zs: z.array(z.number()).optional().describe("Explicit Z coordinates of the E-W streets (instead of dz)"),
+      major: z.string().optional().describe("Prefab for the major lines (cs2_find_prefabs category road)"),
+      majorX: z.array(z.number()).optional().describe("X coordinates of N-S streets that use major"),
+      majorZ: z.array(z.number()).optional().describe("Z coordinates of E-W streets that use major"),
+      medium: z.string().optional().describe("Prefab for every mediumEvery-th line"),
+      mediumEvery: z.number().int().min(1).optional().describe("Every Nth line (index 0, N, 2N...) per direction uses medium"),
+      minor: z.string().optional().describe("Prefab for all other lines"),
+      exclude: z.array(z.object({ x: z.number(), z: z.number(), r: z.number() })).optional()
+        .describe("Circles where nothing may be built or zoned"),
+      skipExisting: z.boolean().optional().describe("Skip edges already covered by a road (within 9 m at 25/50/75%)"),
+      water: z.enum(["bridge", "skip"]).optional().describe("Water crossings: bridge (ramp/bridge/ramp) or skip (default)"),
+      snap: z.number().min(0).max(50).optional().describe("Snap distance in meters (default 12)"),
+      gapMs: z.number().min(0).max(5000).optional().describe("Pause between pieces in ms (default 200; lets other requests in)"),
+      zone: z.union([
+        z.string(),
+        z.array(z.object({ x0: z.number(), z0: z.number(), x1: z.number(), z1: z.number(), zone: z.string() })),
+      ]).optional().describe("Zoning applied after the roads: a zone name for the whole area, or rects [{x0,z0,x1,z1,zone}]"),
+      dryRun: z.boolean().optional().describe("Return the planned pieces and zoning without building"),
+      force: z.boolean().optional().describe("Allow milestone-locked prefabs/zones"),
+    },
+  },
+  async (a) => {
+    const params = new URLSearchParams({ x0: String(a.x0), z0: String(a.z0), x1: String(a.x1), z1: String(a.z1) });
+    const num = (k: string, v: number | undefined) => { if (v !== undefined) params.set(k, String(v)); };
+    const str = (k: string, v: string | undefined) => { if (v !== undefined) params.set(k, v); };
+    num("dx", a.dx); num("dz", a.dz); num("mediumEvery", a.mediumEvery); num("snap", a.snap); num("gapMs", a.gapMs);
+    str("major", a.major); str("medium", a.medium); str("minor", a.minor); str("water", a.water);
+    if (a.xs) params.set("xs", a.xs.join(","));
+    if (a.zs) params.set("zs", a.zs.join(","));
+    if (a.majorX) params.set("majorX", a.majorX.join(","));
+    if (a.majorZ) params.set("majorZ", a.majorZ.join(","));
+    if (a.exclude) params.set("exclude", a.exclude.map((c) => `${c.x},${c.z},${c.r}`).join(";"));
+    if (a.skipExisting !== undefined) params.set("skipExisting", String(a.skipExisting));
+    if (a.zone !== undefined) params.set("zone", typeof a.zone === "string" ? a.zone : JSON.stringify(a.zone));
+    if (a.dryRun) params.set("dryRun", "true");
+    if (a.force) params.set("force", "true");
+    try {
+      return jsonResult(await bridgeJson(`/build/grid?${bridgeQueryString(params)}`, 30_000));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_grid_status",
+  {
+    title: "Grid build job status",
+    description:
+      "Progress of a cs2_build_grid job: state (queued, running, zoning, done, cancelled, failed), counts " +
+      "(total, done, ok, failed, skipped, pending), zoning cell counts and a per-piece result list (prefab, " +
+      "endpoints, OK or the error reason). Without id lists the recent jobs.",
+    inputSchema: {
+      id: z.number().int().optional().describe("Job id from cs2_build_grid"),
+      pieces: z.enum(["all", "problems", "failed", "none"]).optional().describe("Which pieces to list (default all)"),
+      offset: z.number().int().min(0).optional().describe("Skip this many listed pieces"),
+      limit: z.number().int().min(1).max(6000).optional().describe("Max pieces listed (default 1500)"),
+    },
+  },
+  async ({ id, pieces, offset, limit }) => {
+    const params = new URLSearchParams();
+    if (id !== undefined) params.set("id", String(id));
+    if (pieces !== undefined) params.set("pieces", pieces);
+    if (offset !== undefined) params.set("offset", String(offset));
+    if (limit !== undefined) params.set("limit", String(limit));
+    try {
+      return jsonResult(await bridgeJson(`/build/grid/status?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_cancel_grid",
+  {
+    title: "Cancel a grid build job",
+    description:
+      "Stop a cs2_build_grid job: the piece in flight still completes, the rest are not built and zoning is not " +
+      "applied. Pieces already built stay.",
+    inputSchema: { id: z.number().int().describe("Job id from cs2_build_grid") },
+  },
+  async ({ id }) => {
+    try {
+      return jsonResult(await bridgeJson(`/build/grid/cancel?id=${id}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_district_detail",
+  {
+    title: "District details",
+    description:
+      "One district: name, prefab, centre, polygon nodes (x, y, z), polygon area and active policies. Use the " +
+      "nodes as the starting point for cs2_reshape_district.",
+    inputSchema: { district: z.string().describe("District 'index:version' from cs2_list_districts") },
+  },
+  async ({ district }) => {
+    try {
+      return jsonResult(await bridgeJson(`/districts/detail?${bridgeQueryString(new URLSearchParams({ district }))}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_reshape_district",
+  {
+    title: "Redraw a district polygon",
+    description:
+      "Replace a district's polygon with new corners, through the same area tool pipeline the game uses to edit an " +
+      "area. Needs 3+ corners without self-intersection; the game's validation errors are returned and nothing " +
+      "changes on failure.",
+    inputSchema: {
+      district: z.string().describe("District 'index:version' from cs2_list_districts"),
+      points: z.array(z.object({ x: z.number(), z: z.number() })).min(3).max(64).describe("New polygon corners"),
+    },
+  },
+  async ({ district, points }) => {
+    const params = new URLSearchParams({ district, points: points.map((p) => `${p.x},${p.z}`).join(";") });
+    try {
+      return jsonResult(await bridgeJson(`/build/district/reshape?${bridgeQueryString(params)}`, 15_000));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_rename_district",
+  {
+    title: "Rename a district",
+    description: "Set a district's custom name (as in the district panel). An empty name clears it.",
+    inputSchema: {
+      district: z.string().describe("District 'index:version' from cs2_list_districts"),
+      name: z.string().max(64).describe("New name"),
+    },
+  },
+  async ({ district, name }) => {
+    try {
+      return jsonResult(await bridgeJson(`/build/district/rename?${bridgeQueryString(new URLSearchParams({ district, name }))}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_delete_district",
+  {
+    title: "Delete a district",
+    description: "Remove a district through the game's bulldoze pipeline. Buildings stay; only the district area and its policies go.",
+    inputSchema: { district: z.string().describe("District 'index:version' from cs2_list_districts") },
+  },
+  async ({ district }) => {
+    try {
+      return jsonResult(await bridgeJson(`/build/district/delete?${bridgeQueryString(new URLSearchParams({ district }))}`, 15_000));
     } catch (err) {
       return errorResult(err);
     }

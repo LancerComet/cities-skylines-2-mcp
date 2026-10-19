@@ -119,6 +119,8 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 | `cs2_traffic` | City-wide traffic flow, worst roads (flow %, volume, four daily periods) and traffic bottlenecks, with the game's own numbers |
 | `cs2_vehicles` | Census of driving vehicles by type and destination, what stopped vehicles wait for, the queue heads holding traffic up and any gridlock loops |
 | `cs2_road_graph` | Road segments of an area with their junctions, direction, flow and traffic lights (optionally every network, incl. station tracks) |
+| `cs2_production` | Economy > Production tab per resource: production, consumption (company inputs, households, commerce/industry/offices, upkeep), surplus or deficit, import/export, storage and capacity |
+| `cs2_resources` | Natural resource grid (fertility, ore, oil, fish from the game's cell map; forest from tree wood) with totals and the richest clusters |
 | `cs2_inspect` | Single-entity detail (residents/employees/status flags) |
 
 **Construction**
@@ -131,10 +133,13 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 | `cs2_upgrade_road` | Road upgrades: grass/trees/wide sidewalk/sound barrier/parking/lighting/median |
 | `cs2_set_junction_control` | Set a junction to traffic lights, no lights, an all-way stop or the game default (the intersection tools' node upgrades) |
 | `cs2_replace_road` | Change the road type of existing segments in place (the road tool's Replace mode): widen a highway, make a street one-way |
+| `cs2_replace_net` | Upgrade road or track segments in place to another prefab of the same family (e.g. Twoway Train Track to Double Train Track, subway tracks); per-segment validation, dryRun, max 30 |
 | `cs2_connect_road` | Build a road or track whose ends snap to existing junctions or split existing segments (like the road tool's snapping), optionally raised or lowered |
+| `cs2_build_grid` / `cs2_grid_status` / `cs2_cancel_grid` | Build a whole street grid (major/medium/minor lines, exclusion circles, skip existing roads, water bridging, optional zoning that spares occupied cells) as one background job; poll its progress, cancel it. `dryRun` previews the plan |
 | `cs2_prefab_info` | Footprint, size, placement rules and cost of a building, or width and layers of a network |
 | `cs2_place_shoreline` | Place a harbor, pump or other shoreline building on the water's edge, snapped like the game's placement tool |
 | `cs2_place_roadside` | Place a station, depot or service building flush against a road segment, facing it |
+| `cs2_specialized_area` | List specialized-industry placeholders and existing extractor areas, or place an agriculture/forestry/ore/oil/fish placeholder building against a road (with the extractor building the game picks for it, plus its extractor area), and draw or redraw its extractor area as a polygon like the game's area tool (shape, overlap and distance from the building checked by the game) |
 | `cs2_buildings_near` | Buildings around a point with kind, footprint and facing, to find free spots or what to clear |
 | `cs2_zone_area` / `cs2_list_zones` | Paint zoning (`None` to clear) and list zone types |
 | `cs2_demolish` | Demolish buildings/segments/trees/districts (bulldozer pipeline) |
@@ -145,11 +150,14 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 | Tool | Description |
 |---|---|
 | `cs2_get_taxes` / `cs2_set_tax` | Tax rates for the four zone classes (clamped to game limits) |
+| `cs2_resource_tax` | Read or set the industrial tax rate of one produced resource (e.g. Minerals), or list them all |
 | `cs2_policies` / `cs2_set_policy` | City policies (with localized names) |
 | `cs2_service_budgets` / `cs2_set_service_budget` | Per-service budget sliders 50-150% |
 | `cs2_get_fees` / `cs2_set_fee` | Service fees (electricity/water/healthcare/education...) |
 | `cs2_get_loan` / `cs2_set_loan` | Borrow / repay loans |
 | `cs2_list_districts` / `cs2_create_district` | List districts / draw a district polygon |
+| `cs2_district_detail` / `cs2_reshape_district` | A district's polygon nodes, area, name and policies / redraw its polygon through the game's area tool (validated) |
+| `cs2_rename_district` / `cs2_delete_district` | Rename a district / delete it through the bulldoze pipeline |
 | `cs2_district_policies` / `cs2_set_district_policy` | District policies |
 | `cs2_tiles_info` | Owned map tiles / upkeep info |
 | `cs2_list_map_tiles` / `cs2_buy_map_tiles` | List tiles (ownership, natural features, permits left) / buy tiles through the game's own purchase logic (price, permits and funds checked by the game) |
@@ -161,6 +169,7 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 | `cs2_list_transit_stops` | Stops with type, name, position, owning station, attached road and the lines serving them; `airplane` lists airport gates (passenger or cargo) and the map's air outside connections |
 | `cs2_place_transit_stop` | Place a roadside bus/tram stop via the object tool pipeline (attached, snapped and validated by the game) |
 | `cs2_create_transit_line` | Line through ordered stops (ids, station buildings or points snapped to stops) via the route tool pipeline; waits for the game's pathfinding and refuses unreachable segments |
+| `cs2_create_route` | Passenger airplane line, or cargo route for airplanes, trains or ships, through airport gates or cargo stands, cargo terminals, harbours and outside connections, like the game's air line and cargo route tools |
 | `cs2_list_transit_lines` | Lines with the transportation panel's numbers (stops, vehicles, passengers on board, usage, length, schedule) and optional per-stop waiting passengers |
 | `cs2_delete_transit_line` | Delete a line exactly like the game's own delete button |
 | `cs2_line_policies` / `cs2_set_line_policy` | A line's policies (ticket price, vehicle count...) and setting them like the line panel does |

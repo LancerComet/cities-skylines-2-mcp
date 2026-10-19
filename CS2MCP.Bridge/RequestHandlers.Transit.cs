@@ -28,8 +28,8 @@ namespace CS2MCP
                 ["metro"] = TransportType.Subway,
                 ["subway"] = TransportType.Subway,
                 ["train"] = TransportType.Train,
-                // Listing only: airport gates and the map's air connections. Flights are run by
-                // the game itself, so airplane lines and stops cannot be created.
+                // Listing airport gates and the map's air connections. Airplane lines and cargo
+                // routes are created with /transit/routes/create (RequestHandlers.Routes.cs).
                 ["airplane"] = TransportType.Airplane,
                 ["air"] = TransportType.Airplane,
             };
@@ -551,7 +551,7 @@ namespace CS2MCP
             }
             if (type == TransportType.Airplane)
             {
-                return BridgeResponse.Error(400, "airplane routes cannot be drawn: airports fly to the map's air connections by themselves");
+                return BridgeResponse.Error(400, "airplane lines and cargo routes are created with cs2_create_route");
             }
             if (!request.Query.TryGetValue("stops", out string rawStops) || string.IsNullOrEmpty(rawStops))
             {
@@ -1220,7 +1220,7 @@ namespace CS2MCP
             typeName = null;
             if (!kTransitTypes.TryGetValue(raw.Trim(), out type))
             {
-                error = BridgeResponse.Error(400, $"unknown transit type '{raw}'; use bus, tram, metro (subway), train or airplane (listing only)");
+                error = BridgeResponse.Error(400, $"unknown transit type '{raw}'; use bus, tram, metro (subway), train or airplane (listing; create air routes with cs2_create_route)");
                 return false;
             }
             typeName = TransitTypeName(type);
