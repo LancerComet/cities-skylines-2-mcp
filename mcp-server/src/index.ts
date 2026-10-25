@@ -2109,6 +2109,46 @@ server.registerTool(
   },
 );
 
+
+
+server.registerTool("cs2_processing_summary", {
+  title: "全城制造配方与真实岗位汇总",
+  description: "一次有界只读ECS扫描，排除采掘、仓储、商业及办公，按原生配方、产权地区和等级汇总制造公司/员工项/工位/原生Workforce与字段覆盖。缺项不补0；配方与岗位不是当前产量，每公司/完整配方实际率和活跃数不受支持。需桥接0.10.5。",
+  inputSchema: {}, annotations: {readOnlyHint:true},
+}, async ()=>{try {await requirePrecisionBridge(9084,"制造配方与真实岗位只读汇总");return jsonResult(await bridgeJson("/city/processing-summary"));}catch(e){return errorResult(e);}});
+
+
+server.registerTool("cs2_extractor_calibration", {
+  title: "十原料采掘原生参数与经营单元校准",
+  description: "一次有界只读扫描当前注册采掘CompanyPrefab、十原料实际公司、Hub、母体升级与自有区域、岗位、原生Workforce、完整效率、历史产量缓存、库存和面积。未知不补0，预算超限整批拒绝。库存/区域/条件理论量不等于实际产量，缓存不等于当前活跃；累计及连接生产资格不受支持。需桥接0.10.5。",
+  inputSchema: { expectedLoadedSaveGuid: extractorCalibrationGuid.optional() },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, async args => {
+  try {
+    await requirePrecisionBridge(9085, "采掘原生参数与经营单元只读校准");
+    const query = args.expectedLoadedSaveGuid
+      ? `?${new URLSearchParams({ expectedLoadedSaveGuid: args.expectedLoadedSaveGuid })}` : "";
+    return jsonResult(await bridgeJson(`/city/extractor-calibration${query}`));
+  } catch (error) { return errorResult(error); }
+});
+
+
+server.registerTool("cs2_industry_work_routes", {
+  title: "产业母体作业线与真实归属只读检查",
+  description: "按当前加载GUID和完整母体实体读取原生作业线/其他升级声明、真实Owner链、端点/车道、完整分段路径与车辆引用。严格只读、固定预算，未知不补零，超限整批拒绝。原生Complete标志/车辆引用不证明生产或成功运输；创建接口尚未提供。未知声明计数为null，需桥接0.10.5。",
+  inputSchema: z.object({
+    index: z.number().int().positive(),
+    version: z.number().int().positive(),
+    expectedLoadedSaveGuid: extractorCalibrationGuid,
+  }).strict(),
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, async ({index, version, expectedLoadedSaveGuid}) => {
+  try {
+    await requirePrecisionBridge(9099, "产业母体作业线只读检查");
+    const query = new URLSearchParams({index:String(index),version:String(version),expectedLoadedSaveGuid});
+    return jsonResult(await bridgeJson(`/city/industry-work-routes?${query}`));
+  } catch (error) { return errorResult(error); }
+});
 const transport = new StdioServerTransport();
 await server.connect(transport);
 console.error(`cs2-mcp 0.10.5 running on stdio (bridge: ${BRIDGE_URL})`);

@@ -141,6 +141,12 @@ namespace CS2MCP
                     return GetResourceDiagnostics();
                 case "/settings/graphics/set":
                     return SetGraphicsSettings(request);
+                case "/city/processing-summary":
+                    return GetProcessingSummary();
+                case "/city/extractor-calibration":
+                    return GetExtractorCalibration(request);
+                case "/city/industry-work-routes":
+                    return GetIndustryWorkRoutes(request);
                 case "/city/overview":
                     return GetCityOverview();
                 case "/city/demand":

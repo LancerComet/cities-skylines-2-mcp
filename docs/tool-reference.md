@@ -1,8 +1,8 @@
 # 全部MCP工具
 
-桥接与MCP公共版本：0.10.5；共122个工具。
+桥接与MCP公共版本：0.10.5；共125个工具。
 
-来自真实SDK listTools。参数资格、正常预览及职责边界见native-control.md和contribution-scope.md；目录不等于游戏已建或已运营。
+来自真实SDK listTools。实际职责与PR4去重见contribution-scope.md；只读数据不是运营验收。
 
 | 工具 | 说明 |
 |---|---|
@@ -128,3 +128,6 @@
 | `cs2_set_junction_control` | Set how one road junction (node id from cs2_road_graph) is controlled, like the game's intersection tools: lights = traffic lights, nolights = remove traffic lights, stop = all-way stop, default = the game's automatic choice. Needs a junction of 3 or more roads. Save first: this recreates the junction. |
 | `cs2_line_vehicles` | Vehicle models a transit line can use (the line panel's vehicle selection): the models currently chosen 按原生UI客货、能源、尺寸和内容资格筛选；返回slot、容量、货种、速度、车型与实际运行车队。普通列车车厢是primary、机车是secondary；两栏为独立集合，容量与速度保持原生单位。需要桥接0.10.3。 |
 | `cs2_set_line_vehicles` | 按cs2_line_vehicles的slot正常选择单个或多个模型，替换整条线路两个栏的选择集合。普通列车primary是车厢、secondary是机车；不是一一配对。clear恢复原生随机。旧车保持车型，需另外观察。需要桥接0.10.3。 |
+| `cs2_processing_summary` | 一次有界只读ECS扫描，排除采掘、仓储、商业及办公，按原生配方、产权地区和等级汇总制造公司/员工项/工位/原生Workforce与字段覆盖。缺项不补0；配方与岗位不是当前产量，每公司/完整配方实际率和活跃数不受支持。需桥接0.10.5。 |
+| `cs2_extractor_calibration` | 一次有界只读扫描当前注册采掘CompanyPrefab、十原料实际公司、Hub、母体升级与自有区域、岗位、原生Workforce、完整效率、历史产量缓存、库存和面积。未知不补0，预算超限整批拒绝。库存/区域/条件理论量不等于实际产量，缓存不等于当前活跃；累计及连接生产资格不受支持。需桥接0.10.5。 |
+| `cs2_industry_work_routes` | 按当前加载GUID和完整母体实体读取原生作业线/其他升级声明、真实Owner链、端点/车道、完整分段路径与车辆引用。严格只读、固定预算，未知不补零，超限整批拒绝。原生Complete标志/车辆引用不证明生产或成功运输；创建接口尚未提供。未知声明计数为null，需桥接0.10.5。 |
