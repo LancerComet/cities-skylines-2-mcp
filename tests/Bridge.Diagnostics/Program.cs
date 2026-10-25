@@ -73,7 +73,11 @@ try
 }
 finally { File.Delete(fixture); }
 
-var server = new HttpBridgeServer(0, req => req.Complete(BridgeResponse.Json(new { req.Query, req.Body })));
+var portProbe = new TcpListener(IPAddress.Loopback, 0);
+portProbe.Start();
+int serverPort = ((IPEndPoint)portProbe.LocalEndpoint).Port;
+portProbe.Stop();
+var server = new HttpBridgeServer(serverPort, req => req.Complete(BridgeResponse.Json(new { req.Query, req.Body })));
 server.Start();
 try
 {
@@ -90,11 +94,11 @@ try
         using var reader = new StreamReader(stream, Encoding.UTF8);
         return reader.ReadToEnd();
     }
-    string reply = Send("GET /echo?q=A+B%2BC HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    string reply = Send($"GET /echo?q=A+B%2BC HTTP/1.1\r\nHost: localhost:{port}\r\n\r\n");
     var payload = JObject.Parse(reply.Substring(reply.IndexOf("\r\n\r\n") + 4));
     Check(payload["Query"]["q"].Value<string>() == "A B+C", "space/plus query decoding failed");
     string body = "{\"name\":\"测试道路\"}";
-    reply = Send("POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: " + Encoding.UTF8.GetByteCount(body) + "\r\n\r\n" + body);
+    reply = Send($"POST /echo HTTP/1.1\r\nHost: localhost:{port}\r\nContent-Length: " + Encoding.UTF8.GetByteCount(body) + "\r\n\r\n" + body);
     payload = JObject.Parse(reply.Substring(reply.IndexOf("\r\n\r\n") + 4));
     Check(payload["Body"].Value<string>() == body, "UTF8 body corrupted");
     foreach (string headers in new[] {
@@ -112,7 +116,7 @@ BridgeRequest queued = null;
 var stoppingServer = new HttpBridgeServer(0, req => { queued = req; entered.Set(); release.Wait(); });
 stoppingServer.Start();
 var dispatch = typeof(HttpBridgeServer).GetMethod("Dispatch", BindingFlags.Instance | BindingFlags.NonPublic);
-var pending = System.Threading.Tasks.Task.Run(() => (BridgeResponse)dispatch.Invoke(stoppingServer, new object[] { new BridgeRequest { Path = "/probe" } }));
+var pending = System.Threading.Tasks.Task.Run(() => (BridgeResponse)dispatch.Invoke(stoppingServer, new object[] { new BridgeRequest { Path = "/probe", Host = "127.0.0.1:0" } }));
 try
 {
     Check(entered.Wait(3000), "dispatch did not reach queue boundary");
@@ -125,7 +129,7 @@ try
     var beforeHandler = JObject.Parse(Encoding.UTF8.GetString(pending.Result.Body));
     Check(beforeHandler["failurePhase"].Value<string>() == "before_handler" && beforeHandler["enqueued"].Value<bool>()
         && !beforeHandler["handlerStarted"].Value<bool>() && !beforeHandler["mayHaveApplied"].Value<bool>(), "queued shutdown proof incorrect");
-    var rejected = (BridgeResponse)dispatch.Invoke(stoppingServer, new object[] { new BridgeRequest { Path = "/probe" } });
+    var rejected = (BridgeResponse)dispatch.Invoke(stoppingServer, new object[] { new BridgeRequest { Path = "/probe", Host = "127.0.0.1:0" } });
     var prequeue = JObject.Parse(Encoding.UTF8.GetString(rejected.Body));
     Check(prequeue["code"].Value<string>() == "bridge_stopped" && prequeue["failurePhase"].Value<string>() == "prequeue"
         && !prequeue["enqueued"].Value<bool>() && !prequeue["safeToRetry"].Value<bool>(), "post-stop request was admitted or replay suggested");
