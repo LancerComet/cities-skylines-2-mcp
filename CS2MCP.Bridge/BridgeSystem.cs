@@ -33,6 +33,13 @@ namespace CS2MCP
         /// </summary>
         public bool SimulationHasTickedSinceLoad { get; private set; } = true;
 
+        /// <summary>供当前主线程只读制造汇总使用；每次重新获取，不跨加载保存组件查找表。</summary>
+        internal Unity.Entities.ComponentLookup<Game.Citizens.Citizen> GetProcessingCitizenLookup()
+        {
+            EntityManager.CompleteDependencyBeforeRO<Game.Citizens.Citizen>();
+            return GetComponentLookup<Game.Citizens.Citizen>(true);
+        }
+
         /// <summary>Frame at which the simulation auto-pauses (0 = disabled).</summary>
         public uint AutoPauseTargetFrame { get; private set; }
 
@@ -57,7 +64,7 @@ namespace CS2MCP
                 port = parsed;
             }
 
-            m_Server = new HttpBridgeServer(port, m_Pending.Enqueue);
+            m_Server = new HttpBridgeServer(port, m_Pending.Enqueue, NativeCaptureResultReader.Read);
             try
             {
                 m_Server.Start();
@@ -86,6 +93,9 @@ namespace CS2MCP
         {
             // 工具还未开始运行就被UI替换时，不会收到OnStopRunning；UI阶段也核一次所有权。
             World.GetExistingSystemManaged<BridgeToolSystem>()?.ReconcileToolOwnership();
+            World.GetExistingSystemManaged<BridgeRoadToolSystem>()?.ReconcileToolOwnership();
+            World.GetExistingSystemManaged<BridgeTransitToolSystem>()?.ReconcileToolOwnership();
+            m_Handlers.ReconcileRenderingLifecycle();
             m_Handlers.ReconcileLaunchFrameLimit();
             m_Handlers.RestoreFrameLimit();
             m_Handlers.ReconcileBackgroundSimulation();
@@ -122,6 +132,7 @@ namespace CS2MCP
 
         public void StopServer()
         {
+            NativeCaptureOperation.Shared.CancelAndClearResult("bridge_stopped");
             m_Server?.Stop();
             m_Server = null;
             // Stop已关闭唯一入队入口；只完成仍在队列且未交付处理器的请求。
@@ -134,6 +145,7 @@ namespace CS2MCP
         protected override void OnDestroy()
         {
             StopServer();
+            m_Handlers?.ReleaseSceneRendering();
             if (Instance == this)
             {
                 Instance = null;

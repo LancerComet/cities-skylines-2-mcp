@@ -27,12 +27,26 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(400, "provide ?name=<prefab name>");
             }
-            if (!TryFindPrefabByName(BuildingPrefabQuery, name, out Entity prefabEntity, out PrefabBase prefab)
-                && !TryFindPrefabByName(NetPrefabQuery, name, out prefabEntity, out prefab)
-                && !TryFindPrefabByName(AssetStampPrefabQuery, name, out prefabEntity, out prefab))
+            Entity prefabEntity = Entity.Null;
+            PrefabBase prefab = null;
+            bool found;
+            if (request.Query.TryGetValue("kind", out string kind))
             {
-                return BridgeResponse.Error(404, $"no building or network prefab named '{name}'");
+                if (kind != "workRoute") return BridgeResponse.Error(400, "kind only accepts workRoute; omit it for existing prefab lookup");
+                // 严格只读分类；不把RoutePrefab塞进对象/道路建造入口。临时查询在异常时同样释放。
+                using (var query = EntityManager.CreateEntityQuery(ComponentType.ReadOnly<WorkRouteData>(), ComponentType.ReadOnly<PrefabData>()))
+                    found = TryFindPrefabByName(query, name, out prefabEntity, out prefab);
             }
+            else
+            {
+                found = TryFindPrefabByName(BuildingPrefabQuery, name, out prefabEntity, out prefab)
+                    || TryFindPrefabByName(NetPrefabQuery, name, out prefabEntity, out prefab)
+                    || TryFindPrefabByName(AssetStampPrefabQuery, name, out prefabEntity, out prefab)
+                    || TryFindPrefabByName(TransitStopPrefabQuery, name, out prefabEntity, out prefab);
+            }
+            if (!found) return BridgeResponse.Error(404, kind == "workRoute"
+                ? $"no registered work-route prefab named '{name}'"
+                : $"no building, network, asset or roadside transit-stop prefab named '{name}'; use kind=workRoute for an industrial work route");
             object building = null;
             if (EntityManager.HasComponent<BuildingData>(prefabEntity))
             {
@@ -82,11 +96,14 @@ namespace CS2MCP
                     elevatedLength = geometryData.m_ElevatedLength;
                     segmentLength = new { min = geometryData.m_EdgeLengthRange.min, max = geometryData.m_EdgeLengthRange.max };
                 }
-                object elevationRange = null;
+                object elevationRange = null, nativePlacement = null;
                 if (EntityManager.HasComponent<PlaceableNetData>(prefabEntity))
                 {
                     PlaceableNetData placeableNet = EntityManager.GetComponentData<PlaceableNetData>(prefabEntity);
                     elevationRange = new { min = placeableNet.m_ElevationRange.min, max = placeableNet.m_ElevationRange.max };
+                    nativePlacement = new { flags = placeableNet.m_PlacementFlags.ToString(),
+                        minWaterElevation = placeableNet.m_MinWaterElevation,
+                        note = "原生水上最低工具偏移；工具偏移、世界标高与海床深度分开，实际结构仍由正常原生预览和生成验收。" };
                 }
                 network = new
                 {
@@ -95,6 +112,7 @@ namespace CS2MCP
                     width,
                     maxSlope,
                     elevationRange,
+                    nativePlacement,
                     elevatedSpanLength = elevatedLength,
                     segmentLength,
                 };
@@ -104,6 +122,23 @@ namespace CS2MCP
                 zoning = roadPrefab.m_ZoneBlock != null, highwayRules = roadPrefab.m_HighwayRules,
                 automaticTrafficLights = roadPrefab.m_TrafficLights,
                 note = "native prefab speed value; generated CarLane speed and lane count must be inspected on actual roads" } : null;
+            // 路边站是原生网络对象；只补已选站的必要元数据，不扩大到所有装饰对象。
+            object transportStop = null;
+            if (EntityManager.HasComponent<TransportStopData>(prefabEntity))
+            {
+                TransportStopData data = EntityManager.GetComponentData<TransportStopData>(prefabEntity);
+                transportStop = new { type = TransitTypeName(data.m_TransportType),
+                    passenger = data.m_PassengerTransport, cargo = data.m_CargoTransport };
+            }
+            object netObject = EntityManager.HasComponent<NetObjectData>(prefabEntity)
+                ? new { requireRoad = EntityManager.GetComponentData<NetObjectData>(prefabEntity).m_RequireRoad.ToString() } : null;
+            object routeConnection = null;
+            if (EntityManager.HasComponent<RouteConnectionData>(prefabEntity))
+            {
+                RouteConnectionData data = EntityManager.GetComponentData<RouteConnectionData>(prefabEntity);
+                routeConnection = new { routeType = data.m_RouteConnectionType.ToString(),
+                    roadType = data.m_RouteRoadType.ToString(), trackType = data.m_RouteTrackType.ToString() };
+            }
             string localizedName = null, localizedDescription = null;
             Game.SceneFlow.GameManager.instance?.localizationManager?.activeDictionary?.TryGetValue($"Assets.NAME[{prefab.name}]", out localizedName);
             Game.SceneFlow.GameManager.instance?.localizationManager?.activeDictionary?.TryGetValue($"Assets.DESCRIPTION[{prefab.name}]", out localizedDescription);
@@ -119,6 +154,15 @@ namespace CS2MCP
                 placement,
                 network,
                 road,
+                transportStop,
+                netObject,
+                routeConnection,
+                workRoute = EntityManager.HasComponent<WorkRouteData>(prefabEntity)
+                    ? OptionalModApi.JsonValue(EntityManager.GetComponentData<WorkRouteData>(prefabEntity)) : null,
+                route = EntityManager.HasComponent<RouteData>(prefabEntity)
+                    ? OptionalModApi.JsonValue(EntityManager.GetComponentData<RouteData>(prefabEntity)) : null,
+                serviceUpgrade = EntityManager.HasComponent<ServiceUpgradeData>(prefabEntity)
+                    ? OptionalModApi.JsonValue(EntityManager.GetComponentData<ServiceUpgradeData>(prefabEntity)) : null,
                 transport = ModEntityComponents(prefabEntity, "Game.Prefabs.Transport"),
                 utilities = DescribeUtilityPrefab(prefabEntity),
                 prefabAssembly = prefab.GetType().Assembly.GetName().Name,

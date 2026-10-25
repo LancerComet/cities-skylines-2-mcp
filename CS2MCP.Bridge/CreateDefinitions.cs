@@ -821,7 +821,7 @@ namespace CS2MCP
             }
         }
 
-        private void CreateSubNet(Entity netPrefab, Entity lanePrefab, Bezier4x3 curve, int2 nodeIndex, int2 parentMesh, CompositionFlags upgrades, NativeList<float4> nodePositions, Game.Objects.Transform parentTransform, OwnerDefinition ownerDefinition, NativeList<ClearAreaData> clearAreas, BuildingUtils.LotInfo lotInfo, bool hasLot, ref Unity.Mathematics.Random random, CreationFlags creationFlags = default, bool independentLayout = false)
+        private void CreateSubNet(Entity netPrefab, Entity lanePrefab, Bezier4x3 curve, int2 nodeIndex, int2 parentMesh, CompositionFlags upgrades, NativeList<float4> nodePositions, Game.Objects.Transform parentTransform, OwnerDefinition ownerDefinition, NativeList<ClearAreaData> clearAreas, BuildingUtils.LotInfo lotInfo, bool hasLot, ref Unity.Mathematics.Random random, CreationFlags creationFlags = default, bool independentLayout = false, int? profileSeed = null)
         {
             m_PrefabNetGeometryData.TryGetComponent(netPrefab, out var componentData);
             CreationDefinition component = default(CreationDefinition);
@@ -829,6 +829,7 @@ namespace CS2MCP
             component.m_SubPrefab = lanePrefab;
             component.m_Flags = creationFlags;
             component.m_RandomSeed = random.NextInt();
+            if (profileSeed.HasValue) component.m_RandomSeed = profileSeed.Value;
             bool flag = parentMesh.x >= 0 && parentMesh.y >= 0;
             NetCourse component2 = default(NetCourse);
             if ((componentData.m_Flags & Game.Net.GeometryFlags.OnWater) != 0)

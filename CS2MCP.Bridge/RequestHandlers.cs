@@ -77,6 +77,8 @@ namespace CS2MCP
                     return GetModAssets(request);
                 case "/prefabs/interchange":
                     return GetInterchangeInfo(request);
+                case "/prefabs/growables":
+                    return GetGrowableCatalog();
                 case "/build/interchange/place":
                     return PlaceInterchange(request);
                 case "/build/road-layout":
@@ -119,8 +121,12 @@ namespace CS2MCP
                     return SetFacilityParkingFee(request);
                 case "/build/building/upgrade":
                     return UpgradeServiceBuilding(request);
+                case "/build/building/upgrade/relocate":
+                    return RelocateBuildingUpgrade(request);
                 case "/build/building/rebuild":
                     return RebuildServiceBuilding(request);
+                case "/city/housing-snapshot":
+                    return GetHousingSnapshot(request);
                 case "/city/happiness":
                     return GetHappinessFactors();
                 case "/entity/name/set":
@@ -269,6 +275,8 @@ namespace CS2MCP
                     return GetPedestrians(request);
                 case "/city/road-graph":
                     return RoadGraph(request);
+                case "/city/waterway-graph":
+                    return WaterwayGraph(request);
                 case "/build/road/replace":
                     return ReplaceRoad(request);
                 case "/build/road/connect":
@@ -332,6 +340,7 @@ namespace CS2MCP
                 loadPurpose = inGame ? World.GetExistingSystemManaged<Game.Serialization.LoadGameSystem>()?.context.purpose.ToString() : null,
                 simulation,
                 clockControl = inGame ? GetClockControlState() : null,
+                uiReadiness = ReadNativeUiLoadReadiness().state,
             });
         }
 
@@ -500,8 +509,48 @@ namespace CS2MCP
         /// </summary>
         private BridgeResponse Screenshot(BridgeRequest request)
         {
+            string source = request.Query.TryGetValue("source", out string requestedSource) ? requestedSource : "currentFrame";
+            if (source != "currentFrame" && source != "gameCamera")
+                return BridgeResponse.Error(400, "source必须为currentFrame或gameCamera");
+            int width = 1280;
+            if (request.Query.ContainsKey("width") && (!request.TryGetInt("width", out width) || width < 64 || width > 3840))
+                return BridgeResponse.Error(400, "width必须为64至3840的整数");
             if (!RuntimeMemory.Read().constructionAllowed)
                 return BridgeResponse.Error(409, "截图分配余量不足或无法核实；先正常保存退出，不进行额外渲染或自动重试");
+            if (source == "gameCamera") {
+                var manager = GameManager.instance;
+                if (manager == null || manager.isGameLoading || manager.gameMode != Game.GameMode.Game)
+                    return BridgeResponse.Error(409, "正常城市场景未就绪，不能主动取景");
+                try {
+                    var camera = World.GetExistingSystemManaged<Game.Rendering.CameraUpdateSystem>()?.activeCamera;
+                    if (camera == null) throw new InvalidOperationException("native_game_camera_unavailable");
+                    int expectedCamera = camera.GetInstanceID();
+                    string expectedGuid = World.GetExistingSystemManaged<Game.Serialization.LoadGameSystem>()?.context.instigatorGuid.ToString();
+                    if (!NativeCaptureOperation.Shared.TryBegin(expectedGuid, expectedCamera, width, out var operation))
+                        return BridgeResponse.Json(operation, 409);
+                    try {
+                        ScreenshotRunner.Ensure().CaptureNative(operation.captureId, () => {
+                            var currentManager = GameManager.instance;
+                            if (World == null || !World.IsCreated || currentManager == null || currentManager.isGameLoading
+                                || currentManager.gameMode != Game.GameMode.Game || !RuntimeMemory.Read().constructionAllowed)
+                                throw new InvalidOperationException("native_capture_scene_or_resource_changed");
+                            string currentGuid = World.GetExistingSystemManaged<Game.Serialization.LoadGameSystem>()?.context.instigatorGuid.ToString();
+                            var currentCamera = World.GetExistingSystemManaged<Game.Rendering.CameraUpdateSystem>()?.activeCamera;
+                            if (currentGuid != expectedGuid || currentCamera == null || currentCamera.GetInstanceID() != expectedCamera)
+                                throw new InvalidOperationException("native_capture_loaded_identity_or_camera_changed");
+                            var active = NativeBackgroundSceneRenderTarget.Resolve(World);
+                            return m_BackgroundSceneRendering.ExecuteNativeCapture(active, () => NativeGameCameraCapture.Capture(currentCamera, width));
+                        }, () => new { nativeCapture = NativeGameCameraCapture.Read(), sceneRendering = m_BackgroundSceneRendering.Read(SceneRenderingRequested) });
+                    } catch (Exception e) {
+                        NativeCaptureOperation.Shared.Fail(operation.captureId, e.GetType().Name + ": " + e.Message);
+                        throw;
+                    }
+                    return BridgeResponse.Json(operation, 202);
+                } catch (Exception e) {
+                    return BridgeResponse.Json(new { error = "原生游戏相机取景失败：" + e.GetType().Name + ": " + e.Message,
+                        mayHaveApplied = false, safeToRetry = false, source = "gameCamera" }, 409);
+                }
+            }
             ScreenshotRunner.Ensure().Capture(request);
             return null;
         }

@@ -2,6 +2,8 @@
 
 **English** | [简体中文](README.CHS.md)
 
+Version 0.10.5 rebases on upstream 72bd7e0 (merged HTTP hardening #3), projects verified native lifecycle, UI-readiness, layout and inspection improvements, and retains the exclusions of pending #4. See [scope](docs/contribution-scope.md) and [HTTP contract](docs/http-bridge-security.md).
+
 Give Claude (or any MCP client) **full control** over a running Cities: Skylines II game: read city data, drive the camera and take screenshots, build roads and buildings, paint zones, manage finances and policies, and control simulation time.
 
 ## Architecture
@@ -95,7 +97,7 @@ claude mcp add cs2 -- node <repo-path>\mcp-server\dist\index.js
 
 Start the game, load a save, then ask Claude: "How are my city's finances?", "Zone a residential area by the river", "Build a road connecting the industrial area to the highway".
 
-## Tool Reference (118 tools)
+## Tool Reference (122 tools)
 
 The tables below cover the original tools. The [complete tool catalog](docs/tool-reference.md)
 includes the additional facility, upgrade, terrain, resource, native road-layout and optional-mod tools.

@@ -64,6 +64,13 @@ namespace CS2MCP
                 position = new float3(x, 0, z);
                 position.y = Game.Simulation.TerrainUtils.SampleHeight(ref terrain, position);
                 if (request.TryGetFloat("rotation", out float degrees)) rotation = quaternion.RotateY(math.radians(degrees));
+                if (EntityManager.HasComponent<PlaceableObjectData>(upgrade)
+                    && (EntityManager.GetComponentData<PlaceableObjectData>(upgrade).m_Flags & PlacementFlags.OwnerSide) != 0)
+                {
+                    if (!TryResolveUpgradeOwnerSide(target, upgrade, new float2(x,z), rotation, out Game.Tools.ControlPoint point, out error)) return error;
+                    position = point.m_Position;
+                    rotation = point.m_Rotation;
+                }
             }
             else position = transform.m_Position;
             if (request.Query.TryGetValue("dryRun", out string dryRun) && dryRun == "true")

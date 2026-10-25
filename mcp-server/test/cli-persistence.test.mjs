@@ -9,6 +9,8 @@ import {spawn} from 'node:child_process';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const guid='1234567890abcdef1234567890abcdef';
+// 有效的1x1 PNG；让用例实际进入CLI落盘失败，而非提前被截图协议拒绝。
+const imageWitness=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j3xkAAAAASUVORK5CYII=','base64');
 
 for (const binaryResponse of [false,true]) {
   test(`CLI keeps the received result when local ${binaryResponse?'image':'journal'} persistence fails, without replay`,async t=>{
@@ -19,7 +21,7 @@ for (const binaryResponse of [false,true]) {
       if(path==='/state')return res.end(JSON.stringify({cityLoaded:true,isLoading:false,cityName:'Example City',loadedSaveGuid:guid,loadPurpose:'LoadGame'}));
       if(path==='/ping')return res.end(JSON.stringify({version:'0.10.3',ok:true}));
       mutationCalls++;
-      if(binaryResponse){res.setHeader('Content-Type','image/png');return res.end(Buffer.from('isolated image witness'));}
+      if(binaryResponse){res.setHeader('Content-Type','image/png');return res.end(imageWitness);}
       res.end(JSON.stringify({applied:true,marker:'native-result-witness'}));
     });
     await new Promise(r=>server.listen(0,'127.0.0.1',r));
@@ -37,12 +39,12 @@ for (const binaryResponse of [false,true]) {
     const code=await new Promise((r,reject)=>{child.on('error',reject);child.on('close',r);});
     assert.equal(code,1,stderr);assert.equal(mutationCalls,1);
     const result=JSON.parse(stdout),failure=JSON.parse(result.content[0].text);
-    assert.equal(result.isError,true);assert.equal(failure.failurePhase,'local_result_persistence');
+    assert.equal(result.isError,true);assert.equal(failure.failurePhase,'local_result_persistence',JSON.stringify(failure));
     assert.equal(failure.toolResponseReceived,true);assert.equal(failure.mayHaveApplied,true);assert.equal(failure.safeToRetry,false);
     if(binaryResponse){
       const image=failure.toolResult.content[0];assert.equal(image.type,'image_metadata');assert.equal(image.mimeType,'image/png');
-      assert.equal(image.data,undefined);assert.equal(image.byteLength,Buffer.byteLength('isolated image witness'));
-      assert.equal(stdout.includes(Buffer.from('isolated image witness').toString('base64')),false);
+      assert.equal(image.data,undefined);assert.equal(image.byteLength,imageWitness.length);
+      assert.equal(stdout.includes(imageWitness.toString('base64')),false);
     } else assert.deepEqual(JSON.parse(failure.toolResult.content[0].text),{applied:true,marker:'native-result-witness'});
   });
 }

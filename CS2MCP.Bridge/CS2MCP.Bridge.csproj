@@ -5,7 +5,7 @@
     <LangVersion>9.0</LangVersion>
     <AssemblyName>CS2MCP</AssemblyName>
     <RootNamespace>CS2MCP</RootNamespace>
-    <Version>0.10.4</Version>
+    <Version>0.10.5</Version>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <!-- Cities: Skylines II install path. Resolution order (first match wins):
          1) -p:GamePath=... on the dotnet build command line
@@ -40,6 +40,10 @@
     </Reference>
     <Reference Include="Colossal.Core">
       <HintPath>$(ManagedDLLPath)\Colossal.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Colossal.UI.Binding">
+      <HintPath>$(ManagedDLLPath)\Colossal.UI.Binding.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Colossal.Logging">
@@ -88,6 +92,14 @@
     </Reference>
     <Reference Include="UnityEngine.ScreenCaptureModule">
       <HintPath>$(ManagedDLLPath)\UnityEngine.ScreenCaptureModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.RenderPipelines.Core.Runtime">
+      <HintPath>$(ManagedDLLPath)\Unity.RenderPipelines.Core.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.RenderPipelines.HighDefinition.Runtime">
+      <HintPath>$(ManagedDLLPath)\Unity.RenderPipelines.HighDefinition.Runtime.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.ImageConversionModule">

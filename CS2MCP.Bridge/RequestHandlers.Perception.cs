@@ -490,6 +490,14 @@ namespace CS2MCP
                 return BridgeResponse.Error(404, $"entity {index}:{version} does not exist");
             }
 
+            bool employeeDetails = request.Query.ContainsKey("employeeLimit") || request.Query.ContainsKey("employeeOffset");
+            int employeeLimit = 0, employeeOffset = 0;
+            if ((request.Query.ContainsKey("employeeLimit") && !request.TryGetInt("employeeLimit", out employeeLimit)) ||
+                (request.Query.ContainsKey("employeeOffset") && !request.TryGetInt("employeeOffset", out employeeOffset)) ||
+                employeeLimit < 0 || employeeLimit > 64 || employeeOffset < 0 || employeeOffset > 65535 ||
+                (employeeOffset > 0 && employeeLimit == 0))
+                return BridgeResponse.Error(400, "employeeLimit must be 0..64; employeeOffset must be 0..65535 and positive offsets require a positive employeeLimit");
+
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             var result = new Dictionary<string, object>
             {
@@ -588,6 +596,7 @@ namespace CS2MCP
             {
                 result["employees"] = EntityManager.GetBuffer<Game.Companies.Employee>(entity, isReadOnly: true).Length;
             }
+            if (employeeDetails) result["employeeRoster"] = DescribeWorkplaceEmployees(entity, employeeOffset, employeeLimit);
 
             return BridgeResponse.Json(result);
         }

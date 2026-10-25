@@ -20,22 +20,35 @@ namespace CS2MCP
         private const int MaxHeaderBytes = 16 * 1024;
         private const int MaxBodyBytes = 1024 * 1024;
         private const int MainThreadTimeoutMs = 10000;
+        // 大城原生异步保存可正常超过10秒；SDK保存预算为60秒，留出传输余量。
+        private const int SaveResponseTimeoutMs = 45000;
+        private const string TokenHeader = "X-CS2MCP-Token";
+        private const string TokenEnvVar = "CS2MCP_TOKEN";
 
         private readonly int m_Port;
+        private readonly string m_Token;
         private readonly Action<BridgeRequest> m_EnqueueToMainThread;
+        private readonly Func<BridgeRequest, BridgeResponse> m_ReadNativeCapture;
         private readonly object m_DispatchGate = new object();
         private TcpListener m_Listener;
         private Thread m_AcceptThread;
         private volatile bool m_Running;
 
-        public HttpBridgeServer(int port, Action<BridgeRequest> enqueueToMainThread)
+        public HttpBridgeServer(int port, Action<BridgeRequest> enqueueToMainThread, Func<BridgeRequest, BridgeResponse> readNativeCapture = null)
         {
             m_Port = port;
             m_EnqueueToMainThread = enqueueToMainThread;
+            m_ReadNativeCapture = readNativeCapture;
+            string token = Environment.GetEnvironmentVariable(TokenEnvVar);
+            m_Token = string.IsNullOrWhiteSpace(token) ? null : token.Trim();
         }
 
         public void Start()
         {
+            if (m_Token == null)
+            {
+                Mod.Log.Warn($"{TokenEnvVar} is not set: requests are not authenticated (Host/Origin/POST checks still apply)");
+            }
             m_Listener = new TcpListener(IPAddress.Loopback, m_Port);
             m_Listener.Start();
             m_Running = true;
@@ -109,6 +122,11 @@ namespace CS2MCP
 
         private BridgeResponse Dispatch(BridgeRequest request)
         {
+            // 所有拒绝发生在入队及原生取景结果领取之前；保留生产关闭同步门。
+            if (!IsLoopbackHost(request.Host))
+                return BridgeResponse.Error(403, "Host header must be 127.0.0.1:" + m_Port + " or localhost:" + m_Port);
+            if (request.Origin != null)
+                return BridgeResponse.Error(403, "cross-origin requests are not allowed");
             lock (m_DispatchGate)
             {
                 if (!m_Running) return StoppedBeforeHandler(enqueued: false);
@@ -118,6 +136,15 @@ namespace CS2MCP
                 {
                     return HandlePing();
                 }
+                // ping免token，其余读写均受可选token保护。预览也使用POST，但不是已应用。
+                if (m_Token != null && !TokenEquals(request.Token, m_Token))
+                    return BridgeResponse.Error(401, "missing or invalid " + TokenHeader + " header");
+                if (IsMutatingPath(request.Path) && request.Method != "POST")
+                    return BridgeResponse.Error(405, request.Path + " changes game state and requires POST");
+                // 只领取既有托管结果；即使相机首帧耗时，也不再排到被其占用的游戏更新中。
+                if (request.Path == "/screenshot" && request.Query.ContainsKey("captureId"))
+                    return m_ReadNativeCapture != null ? m_ReadNativeCapture(request)
+                        : BridgeResponse.Error(409, "当前桥接没有可查询的原生取景结果");
 
                 if (request.Path.StartsWith("/build/", StringComparison.Ordinal) || request.Path == "/transit/stops/relocate") {
                     var memory = RuntimeMemory.Read();
@@ -135,9 +162,15 @@ namespace CS2MCP
                 m_EnqueueToMainThread(request);
             }
             // 等待不能持有关闭门；StopServer需要完成仍未处理的排队请求。
-            BridgeResponse response = request.WaitForResponse(MainThreadTimeoutMs);
-            return response ?? BridgeResponse.Error(503,
-                "simulation thread did not respond within 10s (game still loading, or bridge system disabled)");
+            int timeoutMs = request.Path == "/game/save" ? SaveResponseTimeoutMs : MainThreadTimeoutMs;
+            BridgeResponse response = request.WaitForResponse(timeoutMs);
+            return response ?? BridgeResponse.Json(new {
+                code = "response_timeout",
+                error = $"simulation thread did not respond within {timeoutMs / 1000}s; result unknown, query actual state before any further write",
+                failurePhase = "waiting_for_response", enqueued = true,
+                handlerStarted = (bool?)null, mayHaveApplied = true, safeToRetry = false,
+                timeoutMs
+            }, 503);
         }
 
         /// <summary>只用于尚未交付或尚在队列的请求；已交给处理器的异步结果不能由停止路径覆盖。</summary>
@@ -148,6 +181,57 @@ namespace CS2MCP
                 failurePhase = enqueued ? "before_handler" : "prequeue", enqueued,
                 handlerStarted = false, mayHaveApplied = false, safeToRetry = false
             }, 503);
+        }
+
+        private bool IsLoopbackHost(string host)
+        {
+            return host != null
+                && (host.Equals("127.0.0.1:" + m_Port, StringComparison.OrdinalIgnoreCase)
+                    || host.Equals("localhost:" + m_Port, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>Constant-time comparison so the token can't be guessed by timing.</summary>
+        private static bool TokenEquals(string supplied, string expected)
+        {
+            if (supplied == null)
+            {
+                return false;
+            }
+            byte[] a = Encoding.UTF8.GetBytes(supplied);
+            byte[] b = Encoding.UTF8.GetBytes(expected);
+            int diff = a.Length ^ b.Length;
+            for (int i = 0; i < b.Length; i++)
+            {
+                diff |= (i < a.Length ? a[i] : 0) ^ b[i];
+            }
+            return diff == 0;
+        }
+
+        /// <summary>
+        /// Routes that change game state. Must match isMutatingPath in
+        /// mcp-server/src/bridge-client.ts (requiresPost).
+        /// </summary>
+        public static bool IsMutatingPath(string path)
+        {
+            return path == "/game/milestone-popup" || path.StartsWith("/build/", StringComparison.Ordinal)
+                || path.StartsWith("/sim/", StringComparison.Ordinal)
+                || path.EndsWith("/set", StringComparison.Ordinal)
+                || path.EndsWith("/purchase", StringComparison.Ordinal)
+                || path.EndsWith("/buy", StringComparison.Ordinal)
+                || path.EndsWith("/save", StringComparison.Ordinal)
+                || path.EndsWith("/control", StringComparison.Ordinal)
+                || path.EndsWith("/run", StringComparison.Ordinal)
+                || path.EndsWith("/create", StringComparison.Ordinal)
+                || path.EndsWith("/delete", StringComparison.Ordinal)
+                || path.EndsWith("/place", StringComparison.Ordinal)
+                || path == "/transit/stops/relocate"
+                || path == "/mods/anarchy/normal-construction"
+                || path == "/mods/anarchy/props/refresh"
+                || path == "/game/save"
+                || path == "/city/tiles/buy"
+                || path == "/transit/stops/place"
+                || path == "/transit/lines/create"
+                || path == "/transit/lines/delete";
         }
 
         private static BridgeResponse HandlePing()
@@ -226,6 +310,18 @@ namespace CS2MCP
                 }
                 // This minimal server supports only length-delimited bodies.
                 if (name.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase)) return null;
+                else if (name.Equals("Host", StringComparison.OrdinalIgnoreCase))
+                {
+                    request.Host = value;
+                }
+                else if (name.Equals("Origin", StringComparison.OrdinalIgnoreCase))
+                {
+                    request.Origin = value;
+                }
+                else if (name.Equals(TokenHeader, StringComparison.OrdinalIgnoreCase))
+                {
+                    request.Token = value;
+                }
             }
 
             if (contentLength > 0)
@@ -277,7 +373,7 @@ namespace CS2MCP
         private static void WriteResponse(NetworkStream stream, BridgeResponse response)
         {
             var head = new StringBuilder();
-            head.Append("HTTP/1.1 ").Append(response.Status).Append(response.Status == 200 ? " OK" : " Error").Append("\r\n");
+            head.Append("HTTP/1.1 ").Append(response.Status).Append(response.Status == 200 ? " OK" : response.Status == 202 ? " Accepted" : " Error").Append("\r\n");
             head.Append("Content-Type: ").Append(response.ContentType).Append("\r\n");
             head.Append("Content-Length: ").Append(response.Body.Length).Append("\r\n");
             head.Append("Connection: close\r\n");

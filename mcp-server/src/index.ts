@@ -14,12 +14,17 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-async function requirePrecisionBridge(label = "精细施工", minimum = 10002) {
+async function requirePrecisionBridge(minimumOrLabel: number | string = 10002, labelOrMinimum: string | number = "正常原生控制") {
+  const requested = typeof minimumOrLabel === "number" ? minimumOrLabel
+    : typeof labelOrMinimum === "number" ? labelOrMinimum : 10002;
+  // 生产0.10.2之后的增量首次进入公共0.10.5；不能让旧公共版忽略新参数。
+  const minimum = requested < 10000 ? requested > 9077 ? 10005 : 10002 : requested;
+  const label = typeof minimumOrLabel === "string" ? minimumOrLabel : String(labelOrMinimum);
   const ping = await bridgeJson("/ping",3000) as {version?:string};
   const match = ping.version?.match(/^(\d+)\.(\d+)\.(\d+)/);
   const parts = match?.slice(1).map(Number);
-  if (!parts || parts[0]*1000100+parts[1]*1000+parts[2] < minimum)
-    throw new BridgeError(`${label}需要桥接${minimum === 10003 ? "0.10.3" : "0.10.2"}或更高；当前${ping.version ?? "未知"}，不能让旧桥接静默忽略新参数。`);
+  if (!parts || parts[0]*1000000+parts[1]*1000+parts[2] < minimum)
+    throw new BridgeError(`${label} needs bridge ${Math.floor(minimum/1000000)}.${Math.floor(minimum/1000)%1000}.${minimum%1000} or newer; received ${ping.version ?? "unknown"}.`);
 }
 
 const roadPathSegment = z.object({
@@ -40,7 +45,7 @@ function validateRoadPath(segments:z.infer<typeof roadPathSegment>[]) {
   }
 }
 
-const server = new McpServer({ name: "cs2-mcp", version: "0.10.4" });
+const server = new McpServer({ name: "cs2-mcp", version: "0.10.5" });
 
 server.registerTool("cs2_facility_parking_fees", {
   title: "读取全部公共设施停车费",
@@ -56,7 +61,7 @@ server.registerTool("cs2_set_facility_parking_fee", {
 }, async args=>{try {await requirePrecisionBridge("公共设施停车收费");return jsonResult(await bridgeJson(`/building/parking-fee/set?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,12_000,undefined,{method:"POST"}));}catch(e){return errorResult(e);}});
 registerModTools(server,()=>requirePrecisionBridge("模组原生接入"),()=>requirePrecisionBridge("原生对象预览"),()=>requirePrecisionBridge("已初始化端部的过街控制"));
 registerInterchangeTools(server,()=>requirePrecisionBridge("原生立交资产"));
-registerRoadLayoutTool(server,()=>requirePrecisionBridge("原生道路布局世界高程范围校验"));
+registerRoadLayoutTool(server,()=>requirePrecisionBridge("完整道路布局",10002),()=>requirePrecisionBridge("明示道路纵断面",10005));
 registerRoadLayoutRemovalTool(server,()=>requirePrecisionBridge("原生批量拆路"));
 
 server.registerTool("cs2_facility_catalog", {
@@ -64,6 +69,12 @@ server.registerTool("cs2_facility_catalog", {
   description: "一次按原生服务和菜单归属读取非成长设施及标志性建筑（isSignature单列）：说明、费用、尺寸、锁定、原始容量/效果、正常升级及现场安装数量/位置。固定扩建随父设施列出；空升级数组表示当前原生菜单无手动升级。目录资格不代替正常放置与运营验收。需要桥接0.10.2。",
   annotations: {readOnlyHint:true, destructiveHint:false, openWorldHint:false}, inputSchema: {},
 }, async()=>{try{await requirePrecisionBridge("公共设施完整盘点");return jsonResult(await bridgeJson('/prefabs/facilities'));}catch(e){return errorResult(e);}});
+
+server.registerTool("cs2_growable_catalog", {
+  title: "全部已注册正常成长建筑尺寸与资格",
+  description: "一次只读快照基础/已加载DLC及区域成长Prefab的主题、分区密度、等级、原生格宽深、住宅属性、可选工作数据及独立内容/解锁资格。单列手放标志性/升级/产业占位，正常未来解锁保留；返回独立生成查询对账和完整性，不扫描现场建筑或写内容缓存，不把子集/目录当实际成长。需要桥接0.10.5。",
+  annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},inputSchema:{},
+},async()=>{try{await requirePrecisionBridge(9079,"全部正常成长目录");return jsonResult(await bridgeJson("/prefabs/growables",60000));}catch(e){return errorResult(e);}});
 
 server.registerTool("cs2_signature_buildings", {
   title: "全部五类原生标志性建筑清单",
@@ -76,7 +87,18 @@ server.registerTool("cs2_move_building", {
   description: "原生ObjectTool的Relocate预览、碰撞/资金校验、应用流程；只接受独立手动建筑/标志性建筑，不移动普通分区成长楼、专门产业占位母体或单独子物体。专门产业须使用独立原生流程。普通建筑的扩建与内部结构仍须在应用后独立复核入口、水电、经营和升级；不支持force。dryRun仅位置计算。需要桥接0.10.2。",
   annotations:{readOnlyHint:false,destructiveHint:true,openWorldHint:false},
   inputSchema:{index:z.number().int(),version:z.number().int(),x:z.number().finite(),z:z.number().finite(),rotation:z.number().finite().optional(),dryRun:z.boolean().optional()},
-}, async args=>{try{await requirePrecisionBridge("原生建筑搬迁");return jsonResult(await bridgeJson(`/build/building/move?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000,undefined,{method:"POST"}));}catch(e){return errorResult(e);}});
+}, async args=>{try{await requirePrecisionBridge(9024,"原生建筑搬迁");return jsonResult(await bridgeJson(`/build/building/move?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000));}catch(e){return errorResult(e);}});
+
+server.registerTool("cs2_relocate_building_upgrade", {
+  title: "正常吸附搬迁已装独立建筑扩建",
+  description: "仅已装独立服务扩建；明确本次加载GUID和真实owner index:version，沿原生OwnerSide四侧/格点/高度与Relocate保原child及完整安装引用。默认完整原生预览，dryRun=false才收费应用；固定扩建/成长/产业占位/岸线模块排除。应用后真实车行步行和告警另验，未知结果不重放。需要桥接0.10.5。",
+  annotations:{readOnlyHint:false,destructiveHint:true,openWorldHint:false},
+  inputSchema:{index:z.number().int().min(1),version:z.number().int().min(1),owner:z.string().regex(/^\d+:\d+$/),
+    expectedLoadedSaveGuid:z.string().regex(/^[0-9a-fA-F]{32}$/),x:z.number().finite(),z:z.number().finite(),dryRun:z.boolean().default(true)},
+},async args=>{try{await requirePrecisionBridge(9079,"独立建筑扩建正常吸附搬迁");return jsonResult(await bridgeJson(`/build/building/upgrade/relocate?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000));}catch(e){return errorResult(e);}});
+
+
+
 
 server.registerTool("cs2_skyve_status", {
   title: "Skyve 模组、兼容性与日志诊断",
@@ -130,7 +152,7 @@ server.registerTool("cs2_facilities", {
   title: "设施容量与建筑等级", description: "学校学生/容量、医疗床位/病人、垃圾存储/处理、实际效率、按分区统计建筑等级。", inputSchema: {},
 }, async () => { try { return jsonResult(await bridgeJson("/city/facilities")); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_building_details", {
-  title: "建筑经营与服务详情", description: "实际等级、效率、员工、车辆、辖区、扩建及企业经营；含原生建筑水电需求/满足量、发电/储能及流图连接。拆管线前同时核建筑端口，零瞬时流量不等于冗余；单位保持原生。",
+  title: "建筑经营与服务详情", description: "实际等级、效率、员工、车辆、辖区、扩建及企业经营；0.10.5起读母体Attachment经营Hub及采掘企业原生面板产量/单位类别，0.10.5起读企业原生配方投入产出系数及岗位拟合参数。系数不是本期流量；水电/储能/端口/车队和实际运营分别验，零流量不等于冗余，数量不自行换算成吨。",
   inputSchema: { index: z.number().int(), version: z.number().int() },
 }, async (args) => { try { return jsonResult(await bridgeJson(`/city/building/details?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`)); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_upgrade_building", {
@@ -140,7 +162,27 @@ server.registerTool("cs2_upgrade_building", {
 server.registerTool("cs2_rebuild_service_building", {
   title: "原生损毁服务设施重建", description: "只对原生灾害救援清障已完成的损毁主体或服务附属原位重建。保留正常预览、碰撞与收费；dryRun默认true，实际应用后回读损毁、附属和端口。",
   inputSchema: { index:z.number().int().min(1), version:z.number().int().min(1), dryRun:z.boolean().default(true) },
-}, async args => { try { await requirePrecisionBridge("正常灾害设施重建"); return jsonResult(await bridgeJson(`/build/building/rebuild?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000,undefined,{method:"POST"})); } catch (err) { return errorResult(err); } });
+}, async args => { try { await requirePrecisionBridge(9064,"正常灾害设施重建"); return jsonResult(await bridgeJson(`/build/building/rebuild?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000)); } catch (err) { return errorResult(err); } });
+// 插入既有index.ts作用域。9086是085之后建议首次住房能力版本；Root集中发布时与实际版本统一。
+const housingSnapshotBridgeMinimum = 9086;
+const housingSnapshotExpectedGuid = z.string().regex(
+  /^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/,
+  "expectedLoadedSaveGuid须为当前实际加载的32位或标准连字符GUID",
+).refine(value => !/^0{32}$/.test(value.replaceAll("-", "")), "GUID不能为空");
+
+server.registerTool("cs2_housing_snapshot", {
+  title: "实际住宅家庭空间与Apartment人口加权聚合",
+  description: "一次有界只读住宅→正确家庭租户回指→完整成员诊断，按原生密度、Prefab与地区分别聚合容量、家庭、人口和Apartment。单位按楼一次，家庭原始成员Length与合格市民分开；公司/旧回指/重复/未知/范围外单列。不是全城16分片滚动真值，不输出家庭或市民身份，不扫描全城Citizen或形成逐人请求。硬预算超限整批拒绝。",
+  inputSchema: { expectedLoadedSaveGuid: housingSnapshotExpectedGuid },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, async args => {
+  try {
+    await requirePrecisionBridge(housingSnapshotBridgeMinimum, "实际住房Apartment有界只读聚合");
+    const query = new URLSearchParams({ expectedLoadedSaveGuid: args.expectedLoadedSaveGuid });
+    return jsonResult(await bridgeJson(`/city/housing-snapshot?${query}`));
+  } catch (error) { return errorResult(error); }
+});
+
 server.registerTool("cs2_happiness", {
   title: "全城幸福度成因", description: "与原生幸福度悬浮面板同源的全部正负贡献。", inputSchema: {},
 }, async () => { try { return jsonResult(await bridgeJson("/city/happiness")); } catch (err) { return errorResult(err); } });
@@ -206,28 +248,31 @@ server.registerTool("cs2_set_save_settings", {
   inputSchema: { enabled:z.boolean().optional(), intervalSeconds:z.union([z.literal(60),z.literal(120),z.literal(300),z.literal(600),z.literal(1800),z.literal(3600)]).optional(), retentionCount:z.union([z.literal(1),z.literal(2),z.literal(3),z.literal(10)]).optional() },
 }, async (args) => { const params = new URLSearchParams(); for (const [key,value] of Object.entries(args)) if (value !== undefined) params.set(key,String(value)); try { return jsonResult(await bridgeJson(`/settings/saves/set?${params}`,12_000,undefined,{method:"POST"})); } catch(err) { return errorResult(err); } });
 server.registerTool("cs2_graphics_settings", {
-  title: "游戏帧率设置", description: "读取原生垂直同步、基础渲染帧率上限；显卡驱动插帧后的帧率不在游戏内可读。", inputSchema: {},
+  title: "游戏帧率与后台渲染设置", description: "读取原生垂直同步、基础限帧，以及后台五类降渲染请求/原画质/实际组件与未知值。0.10.5起真正后台临时关闭云、阴影、SSAO、SSGI和SSR；功耗和显卡驱动插帧后帧率未测。", inputSchema: {},
 }, async () => { try { return jsonResult(await bridgeJson("/settings/graphics")); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_resource_diagnostics", {
   title: "读取原生后台资源计数", description: "只读进程提交/物理内存、Unity原生与Mono分配、临时实体、焦点和两次读取间基础帧率；不启用Profiler、不强制GC或卸载资源。", inputSchema: {}, annotations: {readOnlyHint:true},
 }, async () => { try { return jsonResult(await bridgeJson("/diagnostics/resources")); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_set_graphics_settings", {
-  title: "设置游戏基础帧率与垂直同步", description: "使用原生设置关闭/开启垂直同步，应用本次基础帧率上限并保存快照；0.10.3起显式background/foreground启动模式选择30/90帧，未指定模式保留玩家设置，不根据焦点自动切换。不改变画质与驱动插帧。",
-  inputSchema: { maxFps: z.number().int().min(10).max(240).optional(), vSync: z.boolean().optional(), launchMode: z.enum(["background","foreground"]).optional() },
-}, async ({ maxFps, vSync, launchMode }) => {
+  title: "设置游戏限帧与前后台模式", description: "明确后台模式使用30帧及临时原生降渲染（需0.10.5），前台90帧恢复当前玩家画质；不按焦点自动切换。suspendSceneRendering需0.10.5，仅后台可true；false在保持隐藏30帧和五类效果关闭时恢复场景绘制。只管理自有公开相机委托，实际调用、内存和功耗另验。玩家画质文件/分辨率/纹理/驱动保持原样；模拟速度独立。",
+  inputSchema: { maxFps: z.number().int().min(10).max(240).optional(), vSync: z.boolean().optional(), launchMode: z.enum(["background","foreground"]).optional(), suspendSceneRendering: z.boolean().optional() },
+}, async ({ maxFps, vSync, launchMode, suspendSceneRendering }) => {
+  if (suspendSceneRendering === true && launchMode === "foreground")
+    return errorResult(new Error("前台模式不能暂停场景绘制，未发送设置。"));
   if (vSync === true && (maxFps !== undefined || launchMode !== undefined))
     return errorResult(new Error("明确限帧或启动模式要求关闭垂直同步，未发送设置。"));
   const params = new URLSearchParams();
   if (maxFps !== undefined) params.set("maxFps", String(maxFps));
   if (vSync !== undefined) params.set("vSync", String(vSync));
+  if (suspendSceneRendering !== undefined) params.set("suspendSceneRendering", String(suspendSceneRendering));
   if (launchMode !== undefined) {
     if (maxFps !== undefined && maxFps !== (launchMode === "background" ? 30 : 90))
       return errorResult(new Error("maxFps与明确启动模式预设冲突，未发送设置。"));
     params.set("launchMode", launchMode);
   }
   try {
-    await requirePrecisionBridge("图形参数校验与明确前后台模式", launchMode !== undefined ? 10003 : 10002);
-    return jsonResult(await bridgeJson(`/settings/graphics/set?${params}`,12_000,undefined,{method:"POST"}));
+    await requirePrecisionBridge("图形参数校验与明确前后台渲染模式", suspendSceneRendering !== undefined ? 10005 : launchMode !== undefined ? 10003 : 10002);
+    return jsonResult(await bridgeJson(`/settings/graphics/set?${params}`));
   } catch (err) { return errorResult(err); }
 });
 
@@ -339,8 +384,13 @@ server.registerTool(
     description:
       "Capture the current game view as a PNG image. Useful for seeing the city layout, " +
       "checking what the player is looking at, or verifying the result of an action. " +
-      "Returns the image directly.",
+      "Default currentFrame returns an existing game frame. source=gameCamera starts one native game-camera " +
+      "capture for a hidden window and returns a captureId; query that ID to retrieve status or PNG without rendering again. " +
+      "No desktop or game UI; gameCamera needs bridge 0.10.5. Width is only for a new capture.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
+      source: z.enum(["currentFrame", "gameCamera"]).optional(),
+      captureId: z.string().regex(/^[0-9a-f]{32}$/i).optional(),
       width: z
         .number()
         .int()
@@ -350,21 +400,33 @@ server.registerTool(
         .describe("Downscale the image to this width in pixels (default 1280, keeps aspect ratio)"),
     },
   },
-  async ({ width }) => {
+  async ({ width, source, captureId }) => {
     const w = width ?? 1280;
     try {
-      const res = await bridgeFetch(`/screenshot?width=${w}`, 30_000);
+      if (captureId !== undefined && (source !== "gameCamera" || width !== undefined))
+        throw new BridgeError("captureId只用于source=gameCamera领取既有结果，不能同时传width。");
+      if (source !== undefined) await requirePrecisionBridge(source === "gameCamera" ? 9104 : 9103, "显式原生游戏相机取景");
+      const query = captureId === undefined
+        ? `width=${w}${source === undefined ? "" : `&source=${source}`}`
+        : `source=gameCamera&captureId=${captureId}`;
+      const res = await bridgeFetch(`/screenshot?${query}`, 30_000);
       if (!res.ok) {
         const text = await res.text();
         let message = `bridge returned HTTP ${res.status}`;
         try {
-          message = (JSON.parse(text) as { error?: string })?.error ?? message;
+          const payload = JSON.parse(text) as { error?: string; captureId?: string };
+          if (payload.captureId) return {isError:true,content:[{type:"text" as const,text:JSON.stringify(payload,null,2)}]};
+          message = payload?.error ?? message;
         } catch {
           // keep default message
         }
         return errorResult(new BridgeError(message));
       }
+      if (res.status === 202 && source === "gameCamera") return jsonResult(await res.json());
       const buffer = Buffer.from(await res.arrayBuffer());
+      if (!res.headers.get("content-type")?.toLowerCase().startsWith("image/png") ||
+          buffer.length < 8 || !buffer.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])))
+        throw new BridgeError("原生截图没有返回有效PNG；不能把错误文本当游戏实景。");
       return {
         content: [
           { type: "image" as const, data: buffer.toString("base64"), mimeType: "image/png" },
@@ -446,6 +508,14 @@ server.registerTool(
     }
   },
 );
+
+
+
+// 采掘注册参数与经营快照必须来自具备此能力的新桥接，不能回退成旧版空表。
+const extractorCalibrationGuid = z.string().regex(
+  /^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/,
+  "expectedLoadedSaveGuid须为本次实际加载的GUID",
+).refine(value => !/^0{32}$/.test(value.replaceAll("-", "")), "GUID不能为空");
 
 
 server.registerTool("cs2_anarchy_normal_construction", {
@@ -966,20 +1036,30 @@ server.registerTool(
   "cs2_inspect",
   {
     title: "Inspect an entity",
+    annotations: { readOnlyHint: true },
     description:
       "Detail view of one entity (building/road) by index+version: prefab, position, status flags " +
-      "(abandoned/condemned/destroyed), renters, native utility flow/capacity/attached ports and road composition, " +
-      "plus read-only Traffic mod components/buffers. Lane details are opt-in and paginated; default only returns lane counts. Zero instantaneous flow is not proof of redundancy.",
+      "(abandoned/condemned/destroyed), renters, native utility flow/capacity/attached ports and road composition, 0.10.5原生入口SpawnLocation、AccessLane/RouteLane/Takeoff步行弧及资格限制、母体入口表和条件LaneConnection只读, " +
+      "plus read-only Traffic mod components/buffers. Lane details are opt-in and paginated; default only returns lane counts. 0.10.5起nativeConnections.utilityPorts只读当前实体自有公用标记节点，固定扩建单独查询，端口坐标不代替正常接线与实流。0.10.5起employeeLimit/employeeOffset有界只读雇主原生员工、市民住处/工作/当前楼及出行状态；不以员工数或瞬时到岗证明具体通勤路径。Zero instantaneous flow is not proof of redundancy.",
     inputSchema: {
       index: z.number().int().describe("Entity index"),
       version: z.number().int().describe("Entity version"),
       laneLimit: z.number().int().min(0).max(256).optional().describe("Lane details page size; default 0 (summary only)"),
       laneOffset: z.number().int().min(0).max(65535).optional().describe("Lane details offset; default 0"),
+      employeeLimit: z.number().int().min(0).max(64).optional().describe("Optional native employee roster page size; 0 returns metadata only; requires bridge 0.10.5"),
+      employeeOffset: z.number().int().min(0).max(65535).optional().describe("Employee roster offset; a positive offset requires positive employeeLimit"),
     },
   },
-  async ({ index, version, laneLimit, laneOffset }) => {
+  async ({ index, version, laneLimit, laneOffset, employeeLimit, employeeOffset }) => {
     try {
       const params = new URLSearchParams({index:String(index),version:String(version)});
+      if ((employeeOffset ?? 0) > 0 && !(employeeLimit !== undefined && employeeLimit > 0))
+        throw new Error("positive employeeOffset requires a positive employeeLimit");
+      if (employeeLimit !== undefined || employeeOffset !== undefined) {
+        await requirePrecisionBridge(9102, "原生员工到达分页");
+        if (employeeLimit !== undefined) params.set("employeeLimit", String(employeeLimit));
+        if (employeeOffset !== undefined) params.set("employeeOffset", String(employeeOffset));
+      }
       if(laneLimit !== undefined || laneOffset !== undefined) {
         await requirePrecisionBridge("车道分页");
         if(laneLimit !== undefined) params.set("laneLimit",String(laneLimit));
@@ -1112,7 +1192,7 @@ server.registerTool(
   {
     title: "Save the game",
     description:
-      "0.10.4起与原生自动/手动保存共用队列，轮到后读取保存信息并等待本请求原生管线结束；后台隐藏时includePreview=false省略缩略图，不额外渲染或恢复前台。调用后仍须核文件落盘、内层GUID和备份。 " +
+      "与原生自动/手动保存共用队列，轮到后读取保存信息并等待本请求原生管线结束；后台隐藏时includePreview=false省略缩略图，不额外渲染或恢复前台。调用后仍须核文件落盘、内层GUID和备份。 " +
       "Default name is timestamped 'CS2MCP ...'.",
     inputSchema: {
       name: z.string().optional().describe("Save name (default: timestamped)"),
@@ -1219,7 +1299,7 @@ server.registerTool(
   },
 );
 
-const transitType = z.enum(["bus", "tram", "metro", "train", "ship", "ferry"]);
+const transitType = z.enum(["bus", "tram", "metro", "train", "ship", "ferry", "airplane"]);
 
 server.registerTool("cs2_transport_overview", {
   title: "全部客运与货运统计类型",
@@ -1349,9 +1429,10 @@ server.registerTool(
       "the first stop. Each stop is a stop entity id, a station building id (its matching platform is used) or an " +
       "{x, z} point (snaps to the nearest existing stop of that type within snapRadius). Uses the game's own route " +
       "pipeline: it waits for the game to pathfind every segment, and fails with an explanation (e.g. 'no bus path " +
-      "from stop #2 to stop #3') instead of creating a broken line. Needs a depot of the same type for vehicles.",
+      "from stop #2 to stop #3') instead of creating a broken line. Ship/ferry use their native harbor dispatch; " +
+      "other modes need a matching depot. Airplane listing remains available; creation belongs to pending PR4.",
     inputSchema: {
-      type: transitType.describe("Transport type"),
+      type: transitType.exclude(["airplane"]).describe("Transport type"),
       cargo: z.boolean().optional().describe("明确货运模式，仅train/ship；默认false保留客运行为"),
       stops: z.array(entityOrPoint).min(2).max(100).describe("Ordered stops (at least 2 different ones)"),
       name: z.string().max(64).optional().describe("Custom line name (default: the game's 'Bus Line N')"),
@@ -1599,6 +1680,19 @@ server.registerTool(
   },
 );
 
+server.registerTool("cs2_waterway_graph", {
+  title: "读取全图完整水路曲线",
+  description: "单帧只读全部真实Waterway边，包括港口内网；不按名称或中点过滤。返回Prefab、Owner、完整三次曲线、节点index/version及实际合成宽高。complete/truncated/missing明示范围，不能从局部0匹配推全图无航道，也不等于船型净空或运营验收。需要桥接0.10.5。",
+  annotations: {readOnlyHint:true,destructiveHint:false,openWorldHint:false},
+  inputSchema: {limit:z.number().int().min(1).max(3000).optional(),expectedLoadedSaveGuid:z.string().regex(/^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/).optional()},
+}, async args => {
+  try {
+    await requirePrecisionBridge(9092,"全图水路完整曲线");
+    const params=new URLSearchParams(Object.entries(args).map(([key,value])=>[key,String(value)]));
+    return jsonResult(await bridgeJson(`/city/waterway-graph?${bridgeQueryString(params)}`));
+  } catch(e) {return errorResult(e);}
+});
+
 server.registerTool(
   "cs2_connect_road",
   {
@@ -1693,19 +1787,26 @@ server.registerTool("cs2_road_path", {
 server.registerTool(
   "cs2_prefab_info",
   {
-    title: "Prefab dimensions and placement rules",
+    title: "资产尺寸与正常放置规则",
     description:
       "Footprint (lot in 8 m cells and meters), size, placement flags (e.g. Shoreline, RoadSide), placement " +
       "offset and cost of a building prefab, or the width and layers of a network prefab. Use before placing " +
       "large buildings such as harbors, stations and cargo terminals. Includes native utility capacity/voltage/water data " +
-      "and prefab assembly; actual generated road utilities must also be checked through inspect.",
+      "and prefab assembly; actual generated road utilities must also be checked through inspect. " +
+      "0.10.5起支持路边公交/电车站对象的真实几何、放置标志、道路要求和线路连接类型；" +
+      "inspect同时返回当前道路Composition高度范围和有界可摆放区域，元数据不代替原生施工校验。" +
+      "0.10.5起只读母体自有采掘区域声明、各自半径/水域/重叠/资源规则、本地节点与一层占位候选；" +
+      "有界及缺失状态明示，不代表已选资产、现场入口、原生放置通过或企业投产。",
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     inputSchema: {
-      name: z.string().describe("Exact prefab name (cs2_find_prefabs)"),
+      name: z.string().describe("Exact prefab name (cs2_find_prefabs or actual upgrade declarations)"),
+      kind: z.literal("workRoute").optional().describe("明确产业作业线类型；只读且需0.10.5，普通建筑/道路查询省略"),
     },
   },
-  async ({ name }) => {
+  async ({ name, kind }) => {
     const params = new URLSearchParams({ name });
     try {
+      if (kind !== undefined) { await requirePrecisionBridge(9099, "产业作业线预制体只读类型查询"); params.set("kind",kind); }
       return jsonResult(await bridgeJson(`/prefabs/info?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
@@ -1813,7 +1914,8 @@ server.registerTool(
       "highway (Highway Oneway - 2 lanes -> 3 lanes) or turn a street into a one-way one. The game regenerates " +
       "the segments, lanes and zone blocks and validates the result (a wider road can remove buildings it " +
       "overlaps). invert=true flips the drawing direction, which sets the direction of one-way roads. The game " +
-      "updates segments in place, so they normally keep their ids; the replaced segments are returned by position.",
+      "updates segments in place, so they normally keep their ids; the replaced segments are returned by position. " +
+      "dryRun=true runs the full native replacement preview, returns costs/geometry/affected originals and clears it without applying or charging; requires bridge 0.10.5.",
     inputSchema: {
       roads: z
         .array(z.object({ index: z.number().int(), version: z.number().int() }))
@@ -1823,16 +1925,19 @@ server.registerTool(
       prefab: z.string().describe("New road prefab name (cs2_find_prefabs category road)"),
       invert: z.boolean().optional().describe("Flip the drawing direction (one-way roads then run the other way)"),
       force: z.literal(false).optional().describe("正常发展规则只接受 false；不能绕过解锁或碰撞"),
+      dryRun: z.boolean().optional().describe("true为完整原生原位替换预览；不传或false保留实际替换行为"),
     },
   },
-  async ({ roads, prefab, invert, force }) => {
+  async ({ roads, prefab, invert, force, dryRun }) => {
     const params = new URLSearchParams({
       roads: roads.map((r) => `${r.index}:${r.version}`).join(";"),
       prefab,
     });
     if (invert !== undefined) params.set("invert", String(invert));
     if (force) params.set("force", "true");
+    if (dryRun !== undefined) params.set("dryRun", String(dryRun));
     try {
+      if (dryRun === true) await requirePrecisionBridge(9091, "原位扩路原生预览");
       return jsonResult(await bridgeJson(`/build/road/replace?${bridgeQueryString(params)}`, 15_000));
     } catch (err) {
       return errorResult(err);
@@ -2006,4 +2111,4 @@ server.registerTool(
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error(`cs2-mcp 0.10.4 running on stdio (bridge: ${BRIDGE_URL})`);
+console.error(`cs2-mcp 0.10.5 running on stdio (bridge: ${BRIDGE_URL})`);

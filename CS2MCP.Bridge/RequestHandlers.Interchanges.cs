@@ -130,31 +130,47 @@ namespace CS2MCP
             catch { return BridgeResponse.Error(400, "须POST合法道路身份JSON"); }
             foreach (var property in input.Properties())
                 if (property.Name != "roads" && property.Name != "dryRun") return BridgeResponse.Error(400, "批量拆路只接受roads和dryRun");
-            var rows = input["roads"] as JArray;
-            if (rows == null || rows.Count < 1 || rows.Count > 250) return BridgeResponse.Error(400, "须1至250条独立道路");
             if (input["dryRun"] != null && input["dryRun"].Type != JTokenType.Boolean) return BridgeResponse.Error(400, "dryRun须布尔值");
             request.Query["dryRun"] = (bool?)input["dryRun"] == false ? "false" : "true";
-            var targets = new Entity[rows.Count]; var seen = new HashSet<Entity>();
+            if (!TryReadRoadRemovalTargets(input["roads"], out var targets, out error)) return error;
+            if (TransitToolsBusy(out error)) return error;
+            if (!World.GetExistingSystemManaged<BridgeToolSystem>().TryQueueRoadRemoval(targets, request))
+                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+            return null;
+        }
+
+        // 单独拆路与同组替换共用相同身份/独立性边界；整组读完才排队。
+        private bool TryReadRoadRemovalTargets(JToken input, out Entity[] targets, out BridgeResponse error)
+        {
+            targets = null; error = null;
+            var rows = input as JArray;
+            if (rows == null || rows.Count < 1 || rows.Count > 250) {
+                error = BridgeResponse.Error(400, "须1至250条独立道路"); return false;
+            }
+            targets = new Entity[rows.Count]; var seen = new HashSet<Entity>();
             var prefabs = World.GetExistingSystemManaged<PrefabSystem>();
             for (int i = 0; i < rows.Count; i++) {
                 var row = rows[i] as JObject;
                 if (row == null || row.Count != 2 || row["index"]?.Type != JTokenType.Integer || row["version"]?.Type != JTokenType.Integer
                     || !int.TryParse(row["index"].ToString(), out int index) || !int.TryParse(row["version"].ToString(), out int version)
-                    || index <= 0 || version <= 0) return BridgeResponse.Error(400, $"第{i}条必须提供完整有效实体身份");
+                    || index <= 0 || version <= 0) {
+                    error = BridgeResponse.Error(400, $"第{i}条必须提供完整有效实体身份"); return false;
+                }
                 var target = new Entity { Index = index, Version = version };
-                if (!EntityManager.Exists(target) || EntityManager.HasComponent<Game.Common.Deleted>(target)) return BridgeResponse.Error(404, $"第{i}条实体已过期，整批未排队");
-                if (!seen.Add(target)) return BridgeResponse.Error(400, "重复实体，整批未排队");
+                if (!EntityManager.Exists(target) || EntityManager.HasComponent<Game.Common.Deleted>(target)) {
+                    error = BridgeResponse.Error(404, $"第{i}条实体已过期，整批未排队"); return false;
+                }
+                if (!seen.Add(target)) { error = BridgeResponse.Error(400, "重复实体，整批未排队"); return false; }
                 if (!EntityManager.HasComponent<Game.Net.Edge>(target) || EntityManager.HasComponent<Game.Common.Owner>(target)
-                    || !EntityManager.HasComponent<PrefabRef>(target)) return BridgeResponse.Error(400, "只能拆独立正常道路，不能拆建筑内部网络");
+                    || !EntityManager.HasComponent<PrefabRef>(target)) {
+                    error = BridgeResponse.Error(400, "只能拆独立正常道路，不能拆建筑内部网络"); return false;
+                }
                 var prefab = prefabs.GetPrefab<PrefabBase>(EntityManager.GetComponentData<PrefabRef>(target).m_Prefab);
                 if (!(prefab is RoadPrefab) || prefab.name.IndexOf("Invisible", StringComparison.OrdinalIgnoreCase) >= 0)
-                    return BridgeResponse.Error(400, "只能拆正常可见道路，整批未排队");
+                { error = BridgeResponse.Error(400, "只能拆正常可见道路，整批未排队"); return false; }
                 targets[i] = target;
             }
-            if (TransitToolsBusy(out error)) return error;
-            if (!World.GetExistingSystemManaged<BridgeToolSystem>().TryQueueRoadRemoval(targets, request))
-                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
-            return null;
+            return true;
         }
 
         private BridgeResponse BuildRoadLayout(BridgeRequest request)
@@ -164,6 +180,9 @@ namespace CS2MCP
             try { input = JObject.Parse(request.Body ?? ""); }
             catch { return BridgeResponse.Error(400, "须POST合法道路布局JSON"); }
             if (input["force"] != null) return BridgeResponse.Error(400, "道路布局不支持force");
+            foreach (var property in input.Properties())
+                if (!RoadLayoutInputRules.IsKnownField(property.Name))
+                    return BridgeResponse.Error(400, "道路布局含未知字段，整组未排队");
             var partsJson = input["segments"] as JArray;
             if (partsJson == null || partsJson.Count < 1 || partsJson.Count > 250) return BridgeResponse.Error(400, "布局须1至250段道路");
             float x = LayoutNumber(input["x"]), z = LayoutNumber(input["z"]);
@@ -179,6 +198,12 @@ namespace CS2MCP
                 dryRun = input["dryRun"].Value<bool>();
             }
             request.Query["dryRun"] = dryRun ? "true" : "false";
+            bool preserveVerticalProfile = false;
+            if (input["preserveVerticalProfile"] != null) {
+                if (input["preserveVerticalProfile"].Type != JTokenType.Boolean)
+                    return BridgeResponse.Error(400, "preserveVerticalProfile须布尔值");
+                preserveVerticalProfile = input["preserveVerticalProfile"].Value<bool>();
+            }
             var terrain = World.GetExistingSystemManaged<TerrainSystem>().GetHeightData();
             var origin = new float3(x, 0, z);
             origin.y = TerrainUtils.SampleHeight(ref terrain, origin);
@@ -190,12 +215,15 @@ namespace CS2MCP
             {
                 var p = partsJson[i]; string name = p["prefab"]?.Value<string>();
                 if (string.IsNullOrEmpty(name) || name.IndexOf("Invisible", StringComparison.OrdinalIgnoreCase) >= 0)
-                    return BridgeResponse.Error(400, $"第{i}段必须使用正常可见道路");
+                    return BridgeResponse.Error(400, $"第{i}段必须使用正常可见道路、轨道或步道");
                 if (!prefabs.TryGetValue(name, out var prefabEntity))
                 {
-                    if (!TryFindPrefabByName(RoadPrefabQuery, name, out prefabEntity, out var prefab) || !(prefab is RoadPrefab))
-                        return BridgeResponse.Error(404, $"第{i}段道路预制体不存在");
-                    if (IsLocked(prefabEntity)) return BridgeResponse.Error(409, $"道路{name}尚未正常解锁");
+                    // 三类可见交通网络共用原生NetData、曲线、节点和高程范围。
+                    // 排除管线、航道及不可见资产；步道也须通过后续完整原生预览和纵断面校验。
+                    if (!TryFindPrefabByName(NetPrefabQuery, name, out prefabEntity, out var prefab)
+                        || !(prefab is RoadPrefab || prefab is TrackPrefab || prefab is PathwayPrefab))
+                        return BridgeResponse.Error(404, $"第{i}段正常道路、轨道或步道预制体不存在");
+                    if (IsLocked(prefabEntity)) return BridgeResponse.Error(409, $"道路、轨道或步道{name}尚未正常解锁");
                     prefabs.Add(name, prefabEntity); if (firstPrefab == null) firstPrefab = prefab;
                 }
                 var c = p["curve"];
@@ -248,8 +276,16 @@ namespace CS2MCP
                 var world = origin + math.mul(heading, value.xyz / value.w);
                 if (!CheckNetElevation(part.Prefab, world.y - TerrainUtils.SampleHeight(ref terrain, world), out error)) return error;
             }
+            if (preserveVerticalProfile) foreach (var part in parts) {
+                foreach (var endpoint in new[] { new { id = part.Nodes.x, point = part.Curve.a }, new { id = part.Nodes.y, point = part.Curve.d } }) {
+                    if (endpoint.id < 0) continue;
+                    var value = nodePositions[endpoint.id];
+                    if (math.distance(endpoint.point, value.xyz / value.w) > 0.01f)
+                        return BridgeResponse.Error(400, "保留纵断面须共享节点全部端点在1厘米内一致；不能用不同高度的同编号伪造连接");
+                }
+            }
             if (TransitToolsBusy(out error)) return error;
-            if (!World.GetExistingSystemManaged<BridgeToolSystem>().TryQueueRoadLayout(parts, origin, heading, firstPrefab, request))
+            if (!World.GetExistingSystemManaged<BridgeToolSystem>().TryQueueRoadLayout(parts, origin, heading, firstPrefab, request, preserveVerticalProfile))
                 return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
             return null;
         }

@@ -17,6 +17,20 @@ async function mock(t, handler) {
   return `http://127.0.0.1:${server.address().port}`;
 }
 
+test('保存超时的阶段与预算通过MCP错误序列化保留且不重发',async t=>{
+  let calls=0;
+  const payload={code:'response_timeout',error:'result unknown',failurePhase:'waiting_for_response',
+    enqueued:true,handlerStarted:null,mayHaveApplied:true,safeToRetry:false,timeoutMs:45000};
+  const base=await mock(t,(_,res)=>{calls++;res.writeHead(503);res.end(JSON.stringify(payload));});
+  await assert.rejects(bridgeJson('/game/save',1000,base),error=>{
+    const out=JSON.parse(errorResult(error).content[0].text);
+    assert.equal(out.mayHaveApplied,true);assert.equal(out.safeToRetry,false);
+    for(const key of ['code','failurePhase','enqueued','handlerStarted','timeoutMs'])assert.deepEqual(out[key],payload[key]);
+    return true;
+  });
+  assert.equal(calls,1);
+});
+
 test('query space and literal plus retain distinct meanings',async t=>{
   const base=await mock(t,(req,res)=>{
     assert.equal(req.url,'/prefabs?query=A%20B%2BC');res.end('{"ok":true}');
@@ -24,15 +38,13 @@ test('query space and literal plus retain distinct meanings',async t=>{
   assert.deepEqual(await bridgeJson('/prefabs?query=A+B%2BC',1000,base),{ok:true});
 });
 
-test('HTTP method is explicit at the caller; transport defaults to GET without token forwarding',async t=>{
-  const previous=process.env.CS2MCP_TOKEN;process.env.CS2MCP_TOKEN='synthetic-token';
-  t.after(()=>{if(previous===undefined)delete process.env.CS2MCP_TOKEN;else process.env.CS2MCP_TOKEN=previous;});
+test('inherited HTTP policy selects POST for writes and preserves explicit preview requests',async t=>{
   const methods=[];
-  const base=await mock(t,(req,res)=>{methods.push(req.method);assert.equal(req.headers['x-cs2mcp-token'],undefined);res.end('{}');});
+  const base=await mock(t,(req,res)=>{methods.push(req.method);res.end('{}');});
   await bridgeJson('/state',1000,base);
   await bridgeJson('/city/taxes/set?rate=10',1000,base);
   await bridgeJson('/build/interchange/place?dryRun=true',1000,base,{method:'POST'});
-  assert.deepEqual(methods,['GET','GET','POST']);
+  assert.deepEqual(methods,['GET','POST','POST']);
 });
 
 test('partial apply reported with HTTP 409 remains unsafe to replay',async t=>{
@@ -85,7 +97,7 @@ test('native preview error locations survive MCP without changing retry semantic
     return !error.safeToRetry && !error.mayHaveApplied;
   });
 });
-test('milestone reads use GET and explicit dismissal uses POST with uncertain failure metadata',async t=>{
+test('milestone endpoint uses POST while only explicit dismissal has uncertain mutation metadata',async t=>{
   const methods=[];
   const base=await mock(t,(req,res)=>{
     methods.push(req.method);
@@ -95,7 +107,7 @@ test('milestone reads use GET and explicit dismissal uses POST with uncertain fa
   await bridgeJson('/game/milestone-popup',1000,base);
   await bridgeJson('/game/milestone-popup?dismiss=false',1000,base);
   await assert.rejects(bridgeJson('/game/milestone-popup?dismiss=true',1000,base,{method:'POST'}),error=>error.mayHaveApplied&&!error.safeToRetry);
-  assert.deepEqual(methods,['GET','GET','POST']);
+  assert.deepEqual(methods,['POST','POST','POST']);
   assert.equal(isMutation('/build/place?dryRun=true'),false);
   assert.equal(isMutation('/build/place?dryRun=false'),true);
   assert.equal(isMutation('/build/place'),true);

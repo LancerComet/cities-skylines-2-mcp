@@ -41,21 +41,6 @@ namespace CS2MCP
             public float3 Position;
         }
 
-        private enum Stage
-        {
-            Idle,
-            CreateDefinitions,
-            WaitForPaths,
-            Apply,
-            Finish,
-        }
-
-        private enum OperationKind
-        {
-            Stop,
-            Line,
-        }
-
         // The HTTP layer gives up after 10s; answer well before that.
         private const double kPathfindTimeoutSeconds = 6.5;
 
@@ -142,6 +127,7 @@ namespace CS2MCP
         /// <summary>Must be called on the simulation thread.</summary>
         public bool TryQueueStop(Entity prefabEntity, PrefabBase prefab, string typeName, ControlPoint controlPoint, BridgeRequest request)
         {
+            ReconcileToolOwnership();
             if (m_Stage != Stage.Idle)
             {
                 return false;
@@ -160,6 +146,7 @@ namespace CS2MCP
         public bool TryQueueLine(Entity prefabEntity, PrefabBase prefab, string typeName, LineStop[] stops,
             bool hasColor, UnityEngine.Color32 color, string name, int depotCount, BridgeRequest request)
         {
+            ReconcileToolOwnership();
             if (m_Stage != Stage.Idle)
             {
                 return false;
@@ -249,10 +236,10 @@ namespace CS2MCP
             {
                 Mod.Log.Warn($"BridgeTransitToolSystem error in stage {m_Stage}: {e}");
                 string detail = $"{e.GetType().Name}: {e.Message}";
-                CompletePending(BridgeResponse.Error(500, m_Applied
+                CompletePending(TransitFailure(500, m_Applied
                     ? $"the game applied the transit operation, but finishing it failed ({detail}); " +
                       "check cs2_list_transit_lines / cs2_list_transit_stops"
-                    : $"transit operation failed: {detail}"));
+                    : $"transit operation failed: {detail}", "transit_tool_failed"));
                 applyMode = ApplyMode.Clear;
                 Deactivate();
             }
@@ -262,19 +249,7 @@ namespace CS2MCP
         [Preserve]
         protected override void OnStopRunning()
         {
-            if (m_Stage != Stage.Idle && m_ToolSystem.activeTool != this)
-            {
-                // Another tool took over mid-operation; fail fast instead of
-                // letting the HTTP call time out.
-                CompletePending(BridgeResponse.Error(409,
-                    "transit operation interrupted because another tool became active; " +
-                    "check cs2_list_transit_lines / cs2_list_transit_stops before retrying"));
-                m_Stage = Stage.Idle;
-                m_PendingPrefab = null;
-                m_PendingPrefabEntity = Entity.Null;
-                m_LineStops = null;
-                m_PreviousTool = null;
-            }
+            ReconcileToolOwnership();
             base.OnStopRunning();
         }
 
@@ -349,7 +324,7 @@ namespace CS2MCP
             Entity stop = m_ResultEntity;
             if (!IsCommitted(stop))
             {
-                return BridgeResponse.Error(409, "the game did not commit the stop (it may have been rejected while applying)");
+                return TransitFailure(409, "stop commit could not be verified; inspect the city before continuing", "transit_commit_unverified", true);
             }
             Transform transform = EntityManager.GetComponentData<Transform>(stop);
             object road = null;
@@ -408,7 +383,7 @@ namespace CS2MCP
             Entity line = m_ResultEntity;
             if (!IsCommitted(line))
             {
-                BridgeResponse error = BridgeResponse.Error(409, "the game did not commit the line (it may have been rejected while applying)");
+                BridgeResponse error = TransitFailure(409, "line commit could not be verified; inspect the city before continuing", "transit_commit_unverified", true);
                 return _ => error;
             }
             int number = EntityManager.HasComponent<RouteNumber>(line)
@@ -426,6 +401,7 @@ namespace CS2MCP
             string type = m_PendingTypeName;
             string prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null;
             int depots = m_DepotCount;
+            bool requiresDepot = type != "airplane" && type != "ship" && type != "ferry";
             return nameWarning => BridgeResponse.Json(new
             {
                 created = true,
@@ -438,7 +414,8 @@ namespace CS2MCP
                 stopCount = stops.Count,
                 stops,
                 depotsOfThisType = depots,
-                warning = depots == 0
+                requiresDepot,
+                warning = requiresDepot && depots == 0
                     ? $"no {type} depot exists: the line is valid but gets no vehicles until one is built"
                     : null,
                 nameWarning,
@@ -470,28 +447,6 @@ namespace CS2MCP
         internal static string ToHex(UnityEngine.Color32 color)
         {
             return $"#{color.r:X2}{color.g:X2}{color.b:X2}";
-        }
-
-        private void CompletePending(BridgeResponse response)
-        {
-            m_PendingRequest?.Complete(response);
-            m_PendingRequest = null;
-        }
-
-        private void Deactivate()
-        {
-            m_Stage = Stage.Idle;
-            m_PendingRequest = null;
-            m_PendingPrefab = null;
-            m_PendingPrefabEntity = Entity.Null;
-            m_LineStops = null;
-            m_ResultEntity = Entity.Null;
-            m_Applied = false;
-            if (m_ToolSystem.activeTool == this)
-            {
-                m_ToolSystem.activeTool = m_PreviousTool != null && m_PreviousTool != this ? m_PreviousTool : m_DefaultToolSystem;
-            }
-            m_PreviousTool = null;
         }
 
         /// <summary>
@@ -638,7 +593,7 @@ namespace CS2MCP
             }
             string detail = problems.Count > 0 ? string.Join("; ", problems) : "stops unreachable or wrong stop type";
             return $"line blocked by game validation ({m_PendingPrefab?.name}): {detail}. Nothing was created. " +
-                   "Stops must be connected by roads/tracks usable by this transport type.";
+                   "Stops must match this transport type and its native network or outside-connection rules.";
         }
 
         /// <summary>

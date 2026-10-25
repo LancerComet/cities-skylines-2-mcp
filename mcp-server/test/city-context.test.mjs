@@ -47,3 +47,11 @@ test('原生手动保存名须显式绑定，不能从路径推断或静默用�
  for(const name of [undefined,'MCP Save','Another Main'])
   assert.throws(()=>assertManualSaveTarget(b,{name}),{code:'CITY_CONTEXT_MISMATCH'});
 });
+
+test('世界已加载但原生加载覆盖屏或任务未完成，不能启动城市批次',()=>{
+ const a=parseCityContext(data,source);
+ const state={cityLoaded:true,isLoading:false,cityName:a.cityName,loadedSaveGuid:a.loadedSaveGuid,loadPurpose:'LoadGame'};
+ for(const uiReadiness of [{readyForRuntimeSettings:false,overlayScreen:'Loading'},{available:false},{readyForRuntimeSettings:null}])
+  assert.throws(()=>assertLoadedCity(a,{...state,uiReadiness}),{code:'CITY_UI_NOT_READY'});
+ assert.doesNotThrow(()=>assertLoadedCity(a,{...state,uiReadiness:{available:true,readyForRuntimeSettings:true}}));
+});

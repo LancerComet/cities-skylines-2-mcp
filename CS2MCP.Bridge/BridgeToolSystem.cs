@@ -50,6 +50,7 @@ namespace CS2MCP
             BuildingUpgrade,
             BuildingRebuild,
             BuildingMove,
+            BuildingUpgradeMove,
             TransitStopMove,
             Zoning,
             Terrain,
@@ -332,7 +333,7 @@ namespace CS2MCP
                         ownerGeometry = DescribePreviewOwner(owner),
                         collisionTarget = EntityManager.HasComponent<Target>(icon)
                             ? DescribePreviewOwner(EntityManager.GetComponentData<Target>(icon).m_Target) : null, location });
-                    if (rows.Count >= 64) break;
+                    if (rows.Count >= (m_PendingKind == OperationKind.RoadLayout ? 4096 : 64)) break;
                 }
             return rows;
         }
@@ -378,14 +379,31 @@ namespace CS2MCP
                 var a = EntityManager.GetComponentData<Game.Objects.Attached>(entity);
                 attached = new { parent = new { index = a.m_Parent.Index, version = a.m_Parent.Version }, curvePosition = a.m_CurvePosition };
             }
-            object rotation = EntityManager.HasComponent<Transform>(entity)
-                ? (object)EntityManager.GetComponentData<Transform>(entity).m_Rotation.value : null;
+            object rotation = null;
+            if (EntityManager.HasComponent<Transform>(entity)) {
+                var r = EntityManager.GetComponentData<Transform>(entity).m_Rotation.value;
+                // Unity 数学类型含返回自身类型的 swizzle 属性，只输出诊断所需的有限标量。
+                rotation = new { x = r.x, y = r.y, z = r.z, w = r.w };
+            }
             object size = null;
             if (EntityManager.HasComponent<PrefabRef>(entity)) {
                 var p = EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab;
-                if (EntityManager.HasComponent<ObjectGeometryData>(p)) size = EntityManager.GetComponentData<ObjectGeometryData>(p).m_Size;
+                if (EntityManager.HasComponent<ObjectGeometryData>(p)) size = PreviewPoint(EntityManager.GetComponentData<ObjectGeometryData>(p).m_Size);
             }
-            return new { entity = new { index = entity.Index, version = entity.Version }, prefab, kind, curve, position, rotation, size, attached,
+            float? compositionWidth = null;
+            object compositionHeightRange = null;
+            if (EntityManager.HasComponent<Game.Net.Composition>(entity)) {
+                var edgeComposition = EntityManager.GetComponentData<Game.Net.Composition>(entity).m_Edge;
+                if (EntityManager.Exists(edgeComposition) && EntityManager.HasComponent<NetCompositionData>(edgeComposition)) {
+                    var data = EntityManager.GetComponentData<NetCompositionData>(edgeComposition);
+                    float width = data.m_Width;
+                    if (math.isfinite(width) && width > 0f) compositionWidth = width;
+                    if (math.isfinite(data.m_HeightRange.min) && math.isfinite(data.m_HeightRange.max)
+                        && data.m_HeightRange.min <= data.m_HeightRange.max)
+                        compositionHeightRange = new { min = data.m_HeightRange.min, max = data.m_HeightRange.max };
+                }
+            }
+            return new { entity = new { index = entity.Index, version = entity.Version }, prefab, kind, curve, position, rotation, size, attached, compositionWidth, compositionHeightRange,
                 elevation, flags = EntityManager.HasComponent<Temp>(entity) ? temp.m_Flags.ToString() : null,
                 original = new { index = temp.m_Original.Index, version = temp.m_Original.Version } };
         }
@@ -395,17 +413,41 @@ namespace CS2MCP
         private object CollectNativeRoadPreview()
         {
             if (m_PendingKind != OperationKind.RoadLayout) return null;
+            return CaptureNativeRoadPreview();
+        }
+
+        /// <summary>读取本帧原生临时道路，供对象布局及原位替换共用；不激活本工具。</summary>
+        internal object CaptureNativeRoadPreview()
+        {
             var rows = new List<object>();
             bool complete = true;
             using (var entities = m_PreviewCostQuery.ToEntityArray(Allocator.Temp))
                 foreach (var entity in entities)
                 {
                     if (!EntityManager.HasComponent<Game.Net.Curve>(entity) || !EntityManager.HasComponent<Game.Net.Edge>(entity)) continue;
-                    if (rows.Count >= 256) { complete = false; break; }
+                    if (rows.Count >= (m_PendingKind == OperationKind.RoadLayout ? 4096 : 256)) { complete = false; break; }
                     rows.Add(new { temporaryEntity = new { index = entity.Index, version = entity.Version },
                         geometry = DescribePreviewOwner(entity) });
                 }
             return new { complete, roads = rows, note = "原生临时道路，预览结束后清除；未施工或收费" };
+        }
+
+        /// <summary>只列原生临时修改涉及的既有对象；flags表达修改方式，不把全部对象称为将拆除。</summary>
+        internal object CaptureNativeAffectedOriginals()
+        {
+            var rows = new List<object>();
+            bool complete = true;
+            using (var entities = m_PreviewCostQuery.ToEntityArray(Allocator.Temp))
+                foreach (var entity in entities) {
+                    var temp = EntityManager.GetComponentData<Temp>(entity);
+                    if (temp.m_Original == Entity.Null || (temp.m_Flags & TempFlags.Cancel) != 0) continue;
+                    if (rows.Count >= (m_PendingKind == OperationKind.RoadLayout ? 4096 : 256)) { complete = false; break; }
+                    rows.Add(new { temporaryEntity = new { index = entity.Index, version = entity.Version },
+                        originalEntity = new { index = temp.m_Original.Index, version = temp.m_Original.Version },
+                        flags = temp.m_Flags.ToString(), preview = DescribePreviewOwner(entity),
+                        original = DescribePreviewOwner(temp.m_Original) });
+                }
+            return new { complete, objects = rows, note = "原生预览涉及的既有对象及修改标志，不等于全部对象将拆除；未施工" };
         }
 
         private void Activate()
@@ -416,7 +458,7 @@ namespace CS2MCP
         }
 
         /// <summary>回读原生CostSystem算好的Temp费用；不另行扣款，不用道路单价猜总价。</summary>
-        private int NativePreviewCost()
+        internal int NativePreviewCost()
         {
             int total = 0;
             using (var entities = m_PreviewCostQuery.ToEntityArray(Allocator.Temp))
@@ -458,6 +500,7 @@ namespace CS2MCP
                                 inputDeps = CreateBuildingUpgradeDefinitions(inputDeps);
                                 break;
                             case OperationKind.BuildingMove:
+                            case OperationKind.BuildingUpgradeMove:
                             case OperationKind.TransitStopMove:
                                 inputDeps = CreateBuildingMoveDefinitions(inputDeps);
                                 break;
@@ -487,6 +530,11 @@ namespace CS2MCP
                         break;
 
                     case Stage.Apply:
+                        if (m_PendingKind == OperationKind.BuildingUpgradeMove) {
+                            ApplyBuildingUpgradeMovePreview();
+                            m_Stage = Stage.Finish;
+                            break;
+                        }
                         if (m_PendingKind == OperationKind.TransitStopMove) {
                             ApplyTransitStopMovePreview();
                             m_Stage = Stage.Finish;
@@ -511,15 +559,19 @@ namespace CS2MCP
                         if ((m_PendingKind == OperationKind.Object || m_PendingKind == OperationKind.RoadLayout || m_PendingKind == OperationKind.RoadLayoutRemoval || m_PendingKind == OperationKind.BuildingRebuild) && m_PendingRequest != null
                             && m_PendingRequest.TryGetBool("dryRun", out bool objectDryRun) && objectDryRun)
                         {
-                            bool allowed = GetAllowApply();
+                            bool allowed = GetAllowApply() && RoadProfileAllowed;
+                            var validationErrors = CollectPlacementErrorLocations();
                             applyMode = ApplyMode.Clear;
                             CompletePending(BridgeResponse.Json(new { dryRun = true, allowed, applied = false,
                                 prefab = m_PendingPrefab?.name, nativePreviewCost = NativePreviewCost(), errors = CollectPlacementErrors(),
-                                validationErrors = CollectPlacementErrorLocations(),
+                                validationErrors,
+                                validationErrorsComplete = validationErrors.Count < (m_PendingKind == OperationKind.RoadLayout ? 4096 : 64),
                                 nativeRoadPreview = CollectNativeRoadPreview(),
+                                verticalProfile = RoadProfileAudit(),
+                                affectedOriginals = m_PendingKind == OperationKind.RoadLayout ? CaptureNativeAffectedOriginals() : null,
                                 note = "原生对象/复合资产预览已清除，未施工、未收费；实际放置须显式dryRun=false" }));
                         }
-                        else if (GetAllowApply())
+                        else if (GetAllowApply() && RoadProfileAllowed)
                         {
                             applyMode = ApplyMode.Apply;
                             if (m_PendingKind != OperationKind.BuildingMove)
@@ -532,12 +584,18 @@ namespace CS2MCP
                             CompletePending(BridgeResponse.Json(new { error =
                                 "原生施工校验拒绝：" + (errors.Count > 0 ? string.Join(", ", errors)
                                 : "未返回具体错误图标；请核场址、地形、网络接入，不盲重放"),
-                                validationErrors = CollectPlacementErrorLocations() }, 409));
+                                validationErrors = CollectPlacementErrorLocations(), verticalProfile = RoadProfileAudit() }, 409));
                         }
                         m_Stage = Stage.Finish;
                         break;
 
                     case Stage.Finish:
+                        if (m_PendingKind == OperationKind.BuildingUpgradeMove) {
+                            if (!CompleteBuildingUpgradeMove()) break;
+                            applyMode = ApplyMode.None;
+                            Deactivate();
+                            break;
+                        }
                         if (m_PendingKind == OperationKind.TransitStopMove) {
                             if (!CompleteTransitStopMove()) break;
                             applyMode = ApplyMode.None;
@@ -586,7 +644,10 @@ namespace CS2MCP
             catch (Exception e)
             {
                 Mod.Log.Warn($"BridgeToolSystem error in stage {m_Stage}: {e}");
-                CompletePending(m_PendingKind == OperationKind.TransitStopMove
+                CompletePending(m_PendingKind == OperationKind.BuildingUpgradeMove
+                    ? BridgeResponse.Json(new { error = $"upgrade relocation failed: {e.GetType().Name}: {e.Message}",
+                        mayHaveApplied = m_UpgradeMoveApplied, safeToRetry = false }, 500)
+                    : m_PendingKind == OperationKind.TransitStopMove
                     ? BridgeResponse.Json(new { error = $"stop relocation failed: {e.GetType().Name}: {e.Message}",
                         mayHaveApplied = m_StopMoveApplied, safeToRetry = false }, 500)
                     : BridgeResponse.Error(500, $"placement failed: {e.GetType().Name}: {e.Message}"));
@@ -606,6 +667,7 @@ namespace CS2MCP
                         note = "整组独立道路经原生拆除预览与应用；退款由游戏计费。回读保留道路、实际删除与资金，不能重放旧实体。" });
                 case OperationKind.RoadLayout:
                     return BridgeResponse.Json(new { applied = true, segments = m_RoadLayout.Length,
+                        verticalProfile = RoadProfileAudit(),
                         nativePreviewCost = NativePreviewCost(),
                         note = "原生道路布局应用；须回读实际曲线、车道、节点和收费，不代表已通车或运营验收。" });
                 case OperationKind.BuildingUpgrade:
@@ -683,10 +745,15 @@ namespace CS2MCP
             m_PendingPrefab = null;
             m_PendingApplyResponse = null;
             m_PendingPrefabEntity = Entity.Null;
+            m_UpgradeMoveOwner = Entity.Null;
+            m_UpgradeMoveBefore = null;
+            m_UpgradeMoveApplied = false;
+            m_UpgradeMoveReadbacks = 0;
             m_StopMoveReadContract = null;
             m_StopMoveContract = null;
             m_StopMoveApplied = false;
             m_RoadLayout = null;
+            ClearRoadProfile();
             m_RoadRemovalTargets = null;
             m_ZonePreview?.Clear();
             if (m_ToolSystem.activeTool == this)

@@ -328,6 +328,8 @@ namespace CS2MCP
 
         private BridgeResponse ReplaceRoad(BridgeRequest request)
         {
+            if (request.Query.ContainsKey("dryRun") && !request.TryGetBool("dryRun", out _))
+                return BridgeResponse.Error(400, "dryRun必须为布尔值，未排队替换");
             if (!TryGetCity(out _, out BridgeResponse error))
             {
                 return error;

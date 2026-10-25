@@ -127,6 +127,64 @@ namespace CS2MCP
             return new { electricity, water, note = "native prefab components; absence here does not prove absence on generated road composition; inspect an actual road for live flow graph" };
         }
 
+        // 固定扩建可自行拥有公用端口；它不是独立Building，不能只查母体或从楼体中心猜接线点。
+        // 仅遍历当前实体的原生SubNet，保留标记节点及有限邻接，不生成、移动或连接任何对象。
+        private object DescribeNativeUtilityPorts(Entity entity)
+        {
+            var nodes = new HashSet<Entity>();
+            var ports = new List<object>();
+            int partCount = 0, examined = 0, missing = 0;
+            if (EntityManager.HasBuffer<Game.Net.SubNet>(entity)) {
+                var parts = EntityManager.GetBuffer<Game.Net.SubNet>(entity, true);
+                partCount = parts.Length;
+                for (int i = 0; i < partCount && i < 256; i++) {
+                    examined++;
+                    Entity part = parts[i].m_SubNet;
+                    if (!EntityManager.Exists(part)) { missing++; continue; }
+                    if (EntityManager.HasComponent<Game.Net.Node>(part)) nodes.Add(part);
+                    else if (EntityManager.HasComponent<Game.Net.Edge>(part)) {
+                        var edge = EntityManager.GetComponentData<Game.Net.Edge>(part);
+                        nodes.Add(edge.m_Start); nodes.Add(edge.m_End);
+                    }
+                }
+            }
+            foreach (Entity node in nodes) {
+                if (!EntityManager.Exists(node) || !EntityManager.HasComponent<Game.Net.Node>(node)
+                    || !EntityManager.HasComponent<PrefabRef>(node)) { missing++; continue; }
+                Entity prefab = EntityManager.GetComponentData<PrefabRef>(node).m_Prefab;
+                if (prefab == Entity.Null || !EntityManager.Exists(prefab)) { missing++; continue; }
+                if (!EntityManager.HasComponent<ElectricityConnectionData>(prefab)
+                    && !EntityManager.HasComponent<WaterPipeConnectionData>(prefab)) continue;
+                var edges = new List<object>();
+                int edgeCount = 0;
+                if (EntityManager.HasBuffer<Game.Net.ConnectedEdge>(node)) {
+                    var buffer = EntityManager.GetBuffer<Game.Net.ConnectedEdge>(node, true);
+                    edgeCount = buffer.Length;
+                    for (int i = 0; i < edgeCount && i < 16; i++)
+                        edges.Add(new { entity = Ref(buffer[i].m_Edge), prefab = PrefabNameOf(buffer[i].m_Edge) });
+                }
+                Entity owner = EntityManager.HasComponent<Game.Common.Owner>(node)
+                    ? EntityManager.GetComponentData<Game.Common.Owner>(node).m_Owner : Entity.Null;
+                object net = null;
+                if (EntityManager.HasComponent<NetData>(prefab)) {
+                    var data = EntityManager.GetComponentData<NetData>(prefab);
+                    net = new { requiredLayers = data.m_RequiredLayers.ToString(), connectLayers = data.m_ConnectLayers.ToString() };
+                }
+                int? parentMesh = EntityManager.HasComponent<Game.Tools.LocalTransformCache>(node)
+                    ? EntityManager.GetComponentData<Game.Tools.LocalTransformCache>(node).m_ParentMesh : (int?) null;
+                ports.Add(new { entity = Ref(node), prefab = PrefabNameOf(node),
+                    position = InterchangePoint(EntityManager.GetComponentData<Game.Net.Node>(node).m_Position),
+                    owner = owner == Entity.Null ? null : Ref(owner), ownerPrefab = owner == Entity.Null ? null : PrefabNameOf(owner),
+                    parentMesh, network = net, qualification = DescribeUtilityPrefab(prefab),
+                    connectedEdgeCount = edgeCount, connectedEdges = edges, connectedEdgesComplete = edgeCount <= 16,
+                    deleted = EntityManager.HasComponent<Game.Common.Deleted>(node), temporary = EntityManager.HasComponent<Game.Tools.Temp>(node) });
+            }
+            return new { subNetworkCount = partCount, examinedSubNetworkCount = examined,
+                subNetworksComplete = examined == partCount, missingReferences = missing,
+                examinedNodeCount = nodes.Count, ports, complete = examined == partCount && missing == 0,
+                note = "read-only native SubNet utility markers on this entity; inspect installed upgrade entities separately. Coordinates and qualification do not prove an external line, flow or normal construction acceptance" };
+        }
+
         private static object DescribeCompositionFlags(CompositionFlags flags) => new
         {
             general = flags.m_General.ToString(), left = flags.m_Left.ToString(), right = flags.m_Right.ToString()
@@ -213,8 +271,26 @@ namespace CS2MCP
                 {
                     var data = EntityManager.GetComponentData<Game.Prefabs.NetCompositionData>(c.m_Edge);
                     result["roadCompositionGeometry"] = new { width = data.m_Width,
+                        heightRange = new { min = data.m_HeightRange.min, max = data.m_HeightRange.max },
                         flags = DescribeCompositionFlags(data.m_Flags),
                         note = "实际生成横断面宽度，含边侧空间；不能用基础道路名称推定升级后的占地或车道数" };
+                }
+                // 与正常路边站吸附使用同一Composition；只读当前道路的有界区域，不生成Temp。
+                if (EntityManager.HasBuffer<Game.Prefabs.NetCompositionArea>(c.m_Edge))
+                {
+                    var areas = EntityManager.GetBuffer<Game.Prefabs.NetCompositionArea>(c.m_Edge, true);
+                    var selectedAreas = new List<object>();
+                    for (int i = 0; i < areas.Length && i < 128; i++)
+                    {
+                        var area = areas[i];
+                        selectedAreas.Add(new { index = i, width = area.m_Width, flags = area.m_Flags.ToString(),
+                            position = new { x = area.m_Position.x, y = area.m_Position.y },
+                            snapPosition = new { x = area.m_SnapPosition.x, y = area.m_SnapPosition.y },
+                            snapWidth = area.m_SnapWidth });
+                    }
+                    result["roadCompositionAreas"] = selectedAreas;
+                    result["roadCompositionAreaCount"] = areas.Length;
+                    result["roadCompositionAreasComplete"] = areas.Length <= 128;
                 }
             }
             var attachments = new List<object>();

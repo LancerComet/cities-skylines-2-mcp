@@ -64,6 +64,7 @@ namespace CS2MCP
         private Entity m_PendingPrefabEntity;
         private PrefabBase m_PendingPrefab;
         private BridgeRequest m_PendingRequest;
+        private BridgeResponse m_PendingPreviewResponse;
         private ToolBaseSystem m_PreviousTool;
         private bool m_Applied;
 
@@ -73,6 +74,19 @@ namespace CS2MCP
         public override string toolID => "CS2MCP.Road";
 
         public bool IsBusy => m_Stage != Stage.Idle;
+
+        /// <summary>首次ToolUpdate前或施工中被切走时，释放自有请求并保留玩家当前工具。</summary>
+        public void ReconcileToolOwnership()
+        {
+            if (m_Stage == Stage.Idle || m_ToolSystem.activeTool == this) return;
+            applyMode = ApplyMode.Clear;
+            CompletePending(BridgeResponse.Json(new {
+                error = OperationName + " interrupted because another tool became active; read the target before continuing",
+                failurePhase = "tool_interrupted", operation = OperationName, stage = m_Stage.ToString(),
+                mayHaveApplied = m_Applied, safeToRetry = false,
+            }, 409));
+            Deactivate();
+        }
 
         [Preserve]
         protected override void OnCreate()
@@ -127,6 +141,7 @@ namespace CS2MCP
             m_PendingInvert = invert;
             m_PendingRequest = request;
             m_Applied = false;
+            m_PendingPreviewResponse = null;
             m_Mode = Mode.Replace;
             m_Stage = Stage.CreateDefinitions;
             m_PreviousTool = m_ToolSystem.activeTool;
@@ -151,6 +166,7 @@ namespace CS2MCP
             m_PendingInvert = false;
             m_PendingRequest = request;
             m_Applied = false;
+            m_PendingPreviewResponse = null;
             m_Mode = Mode.Build;
             m_Stage = Stage.CreateDefinitions;
             m_PreviousTool = m_ToolSystem.activeTool;
@@ -181,7 +197,21 @@ namespace CS2MCP
                         break;
 
                     case Stage.Apply:
-                        if (GetAllowApply())
+                        if (m_Mode == Mode.Replace && m_PendingRequest != null
+                            && m_PendingRequest.TryGetBool("dryRun", out bool dryRun) && dryRun)
+                        {
+                            // 和实际替换共享定义与原生Validation，预览只清除Temp，不进入收费/应用。
+                            var preview = World.GetOrCreateSystemManaged<BridgeToolSystem>();
+                            bool allowed = GetAllowApply();
+                            m_PendingPreviewResponse = BridgeResponse.Json(new { dryRun = true, allowed, applied = false,
+                                prefab = m_PendingPrefab?.name, requestedRoads = m_PendingEdges.Length, inverted = m_PendingInvert,
+                                nativePreviewCost = preview.NativePreviewCost(), errors = CollectTempErrors(),
+                                validationErrors = CollectTempErrorLocations(), nativeRoadPreview = preview.CaptureNativeRoadPreview(),
+                                affectedOriginals = preview.CaptureNativeAffectedOriginals(),
+                                note = "原位替换的正常原生预览；已清除临时定义，未替换、未收费。临时身份不可用于施工，实际车道另验。" });
+                            applyMode = ApplyMode.Clear;
+                        }
+                        else if (GetAllowApply())
                         {
                             applyMode = ApplyMode.Apply;
                             m_Applied = true;
@@ -202,7 +232,11 @@ namespace CS2MCP
 
                     case Stage.Finish:
                         applyMode = ApplyMode.None;
-                        if (m_Applied)
+                        if (m_PendingPreviewResponse != null)
+                        {
+                            CompletePending(m_PendingPreviewResponse);
+                        }
+                        else if (m_Applied)
                         {
                             CompletePending(m_Mode == Mode.Build ? BuildConnectResponse() : BuildReplaceResponse());
                         }
@@ -224,9 +258,13 @@ namespace CS2MCP
             {
                 Mod.Log.Warn($"BridgeRoadToolSystem error in stage {m_Stage}: {e}");
                 string detail = $"{e.GetType().Name}: {e.Message}";
-                CompletePending(BridgeResponse.Error(500, m_Applied
-                    ? $"the game applied the change, but finishing {OperationName} failed ({detail}); check cs2_list_roads"
-                    : $"{OperationName} failed: {detail}"));
+                CompletePending(BridgeResponse.Json(new {
+                    error = m_Applied
+                        ? $"the game applied the change, but finishing {OperationName} failed ({detail}); check cs2_list_roads"
+                        : $"{OperationName} failed: {detail}",
+                    failurePhase = "native_tool_exception", operation = OperationName, stage = m_Stage.ToString(),
+                    mayHaveApplied = m_Applied, safeToRetry = false,
+                }, 500));
                 applyMode = ApplyMode.Clear;
                 Deactivate();
             }
@@ -236,18 +274,7 @@ namespace CS2MCP
         [Preserve]
         protected override void OnStopRunning()
         {
-            if (m_Stage != Stage.Idle && m_ToolSystem.activeTool != this)
-            {
-                // Another tool took over mid-operation; fail fast instead of
-                // letting the HTTP call time out.
-                CompletePending(BridgeResponse.Error(409,
-                    OperationName + " interrupted because another tool became active; check cs2_list_roads before retrying"));
-                m_Stage = Stage.Idle;
-                m_PendingEdges = null;
-                m_PendingPrefab = null;
-                m_PendingPrefabEntity = Entity.Null;
-                m_PreviousTool = null;
-            }
+            ReconcileToolOwnership();
             base.OnStopRunning();
         }
 
@@ -578,6 +605,8 @@ namespace CS2MCP
             m_Stage = Stage.Idle;
             m_PendingRequest = null;
             m_PendingEdges = null;
+            m_PendingMidpoints = null;
+            m_PendingPreviewResponse = null;
             m_PendingPrefab = null;
             m_PendingPrefabEntity = Entity.Null;
             m_Applied = false;

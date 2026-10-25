@@ -28,6 +28,7 @@ namespace CS2MCP
             Entity prefab = EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab;
             var names = World.GetOrCreateSystemManaged<Game.UI.NameSystem>();
             var row = new Dictionary<string, object> { ["entity"] = Ref(entity), ["name"] = names.GetRenderedLabelName(entity), ["prefab"] = NativeName(prefab) };
+            row["attachment"] = DescribeNativeAttachment(entity);
             if (EntityManager.HasComponent<Game.Common.Destroyed>(entity)) {
                 var destroyed = EntityManager.GetComponentData<Game.Common.Destroyed>(entity);
                 row["destruction"] = new { cleared = destroyed.m_Cleared, cleanupComplete = Unity.Mathematics.math.isfinite(destroyed.m_Cleared) && destroyed.m_Cleared >= 1f,
@@ -48,11 +49,14 @@ namespace CS2MCP
             row["serviceScope"] = canAssign && districts.Count == 0 ? "all districts within native operating range" : "native assigned districts";
             var efficiency = new List<object>(); float product = 1;
             if (EntityManager.HasBuffer<Game.Buildings.Efficiency>(entity))
-                foreach (var factor in EntityManager.GetBuffer<Game.Buildings.Efficiency>(entity, true)) {
-                    product *= Math.Max(0, factor.m_Efficiency);
+            {
+                var factors = EntityManager.GetBuffer<Game.Buildings.Efficiency>(entity, true);
+                product = NativeEfficiencyRules.Product(factors);
+                foreach (var factor in factors) {
                     efficiency.Add(new { factor = factor.m_Factor.ToString(), multiplier = factor.m_Efficiency });
                 }
-            row["efficiency"] = product > 0 ? Math.Max(.01f, (float)Math.Round(product * 100) / 100) : 0;
+            }
+            row["efficiency"] = NativeEfficiencyRules.Round(product);
             row["efficiencyFactors"] = efficiency;
             if (EntityManager.HasComponent<SpawnableBuildingData>(prefab)) row["level"] = EntityManager.GetComponentData<SpawnableBuildingData>(prefab).m_Level;
             if (EntityManager.HasComponent<Game.Companies.WorkProvider>(entity)) row["employeeCapacity"] = EntityManager.GetComponentData<Game.Companies.WorkProvider>(entity).m_MaxWorkers;
@@ -62,8 +66,7 @@ namespace CS2MCP
                 var data = CombinedFacilityData<DeathcareFacilityData>(entity, prefab);
                 float immediate = EntityManager.HasBuffer<Game.Buildings.Efficiency>(entity)
                     ? Game.Buildings.BuildingUtils.GetImmediateEfficiency(EntityManager.GetBuffer<Game.Buildings.Efficiency>(entity, true)) : 1f;
-                // 与原生GetEfficiency逐因子相乘后的百分位取整一致；Span重载不兼容桥接的net472引用。
-                float operatingEfficiency = product > 0 ? Unity.Mathematics.math.max(.01f, Unity.Mathematics.math.round(100f * product) / 100f) : 0;
+                float operatingEfficiency = NativeEfficiencyRules.Round(product);
                 var fleet = new List<object>();
                 if (EntityManager.HasBuffer<Game.Vehicles.OwnedVehicle>(entity))
                     foreach (var owned in EntityManager.GetBuffer<Game.Vehicles.OwnedVehicle>(entity, true)) {
@@ -167,11 +170,33 @@ namespace CS2MCP
                 if (EntityManager.HasBuffer<Game.Economy.Resources>(company)) foreach (var resource in EntityManager.GetBuffer<Game.Economy.Resources>(company, true))
                     inventory.Add(new { resource = resource.m_Resource.ToString(), amount = resource.m_Amount });
                 object process = null;
+                object extractorProduction = null;
                 if (EntityManager.HasComponent<PrefabRef>(company)) {
                     Entity cp = EntityManager.GetComponentData<PrefabRef>(company).m_Prefab;
                     if (EntityManager.HasComponent<IndustrialProcessData>(cp)) {
                         var ip = EntityManager.GetComponentData<IndustrialProcessData>(cp);
-                        process = new { input1 = ip.m_Input1.m_Resource.ToString(), input2 = ip.m_Input2.m_Resource.ToString(), output = ip.m_Output.m_Resource.ToString() };
+                        process = new { input1 = ip.m_Input1.m_Resource.ToString(), input1AmountRaw = ip.m_Input1.m_Amount,
+                            input2 = ip.m_Input2.m_Resource.ToString(), input2AmountRaw = ip.m_Input2.m_Amount,
+                            output = ip.m_Output.m_Resource.ToString(), outputAmountRaw = ip.m_Output.m_Amount,
+                            maxWorkersPerCell = ip.m_MaxWorkersPerCell,
+                            note = "原生IndustrialProcessData配方系数与岗位拟合参数；系数不是本期真实流量或库存，岗位拟合需结合真实建筑/采掘面积和原生公式。" };
+                        if (EntityManager.HasComponent<Game.Companies.ExtractorCompany>(company)) {
+                            bool panelReady = EntityManager.HasComponent<Game.Companies.CompanyData>(company)
+                                && EntityManager.HasComponent<Game.Buildings.PropertyRenter>(company)
+                                && EntityManager.HasBuffer<Game.Companies.Employee>(company);
+                            string outputUnit = null;
+                            if (EntityManager.HasBuffer<Game.Economy.Resources>(company)) {
+                                var resourcePrefabs = World.GetOrCreateSystemManaged<Game.Prefabs.ResourceSystem>().GetPrefabs();
+                                outputUnit = Game.Economy.EconomyUtils.GetWeight(EntityManager, ip.m_Output.m_Resource, resourcePrefabs) > 0f
+                                    ? "weightPerMonth" : "integerPerMonth";
+                            }
+                            // 与原生 CompanySection 采掘分支一致；不套加工企业估算，也不自行换算成吨。
+                            extractorProduction = new { lastUpdateProduceRaw = data.m_LastUpdateProduce,
+                                outputResource = ip.m_Output.m_Resource.ToString(), nativePanelPrerequisitesMet = panelReady,
+                                nativePanelProductionRateRaw = panelReady ? (int?)data.m_LastUpdateProduce : null,
+                                nativePanelOutputUnit = outputUnit,
+                                note = "原生CompanySection采掘企业ProductionRate统计值及单位类别；保持原始量，不代表即时产能或自行换算后的吨/月。" };
+                        }
                     }
                 }
                 companies.Add(new { entity = Ref(company), name = names.GetRenderedLabelName(company), income = data.m_Income, profit = data.m_Profit,
@@ -180,7 +205,7 @@ namespace CS2MCP
                     employees = EntityManager.HasBuffer<Game.Companies.Employee>(company) ? EntityManager.GetBuffer<Game.Companies.Employee>(company, true).Length : 0,
                     employeeCapacity = EntityManager.HasComponent<Game.Companies.WorkProvider>(company) ? EntityManager.GetComponentData<Game.Companies.WorkProvider>(company).m_MaxWorkers : 0,
                     ownedVehicleCount = EntityManager.HasBuffer<Game.Vehicles.OwnedVehicle>(company) ? EntityManager.GetBuffer<Game.Vehicles.OwnedVehicle>(company, true).Length : 0,
-                    process, inventory });
+                    process, extractorProduction, inventory });
             }
             row["companies"] = companies;
             row["note"] = "native building/company facts; prefab upkeep is not total current monthly upkeep including wages; resource amounts are raw native units, not tons; vehicle count is ownership, not dispatch capacity";
@@ -319,7 +344,8 @@ namespace CS2MCP
             // 外部连接使用 ConnectionLane；不能只看 prefab 名称判断是否允许列车/货运。
             if (EntityManager.HasComponent<Game.Net.ConnectionLane>(lane)) {
                 var data = EntityManager.GetComponentData<Game.Net.ConnectionLane>(lane);
-                connectionData = new { flags = data.m_Flags.ToString(), roadTypes = data.m_RoadTypes.ToString(), trackTypes = data.m_TrackTypes.ToString() };
+                connectionData = new { flags = data.m_Flags.ToString(), accessRestriction = Ref(data.m_AccessRestriction),
+                    roadTypes = data.m_RoadTypes.ToString(), trackTypes = data.m_TrackTypes.ToString() };
             }
             if (EntityManager.HasComponent<Game.Net.Lane>(lane)) {
                 var data = EntityManager.GetComponentData<Game.Net.Lane>(lane);
@@ -338,7 +364,8 @@ namespace CS2MCP
             return new { entity = Ref(lane), prefab = PrefabNameOf(lane), owner = Ref(owner), ownerPrefab = PrefabNameOf(owner), masterData, slaveData,
                 masterLane = EntityManager.HasComponent<Game.Net.MasterLane>(lane),
                 slaveLane = EntityManager.HasComponent<Game.Net.SlaveLane>(lane),
-                track = EntityManager.HasComponent<Game.Net.TrackLane>(lane), trackData, carData, pedestrianData, parkingData, connectionData, pathNodes, curve, pathMethods };
+                track = EntityManager.HasComponent<Game.Net.TrackLane>(lane), trackData, carData, pedestrianData, parkingData, connectionData,
+                laneConnection = DescribeNativeLaneConnection(lane), pathNodes, curve, pathMethods };
         }
 
         private static object DescribePathNode(Game.Pathfind.PathNode node)

@@ -19,13 +19,41 @@ namespace CS2MCP
         private bool m_RuntimeSettingsLoadComplete;
         private double m_LastResourceTime;
         private int m_LastResourceFrame;
+        private readonly BackgroundRenderingPolicy m_BackgroundRendering = new BackgroundRenderingPolicy();
+        private readonly BackgroundSceneRenderingPolicy m_BackgroundSceneRendering = new BackgroundSceneRenderingPolicy();
+        private bool m_SuspendSceneRendering = true;
+        private bool m_RenderingWasReady;
+
+        private bool BackgroundMode => Environment.GetEnvironmentVariable(LaunchFramePolicy.EnvironmentName) == "background";
+        private bool SceneRenderingRequested => BackgroundMode && m_SuspendSceneRendering;
+
+        /// <summary>只在离开已就绪场景时释放一次；失败保留所有权，不在普通帧重试。</summary>
+        public void ReconcileRenderingLifecycle()
+        {
+            var manager = Game.SceneFlow.GameManager.instance;
+            bool ready = m_RuntimeSettingsLoadComplete && manager != null
+                && !manager.isGameLoading && manager.gameMode == Game.GameMode.Game;
+            if (ready) { m_RenderingWasReady = true; return; }
+            if (!m_RenderingWasReady) return;
+            m_RenderingWasReady = false;
+            m_RuntimeSettingsLoadComplete = false;
+            m_FrameLimitRestored = false;
+            NativeCaptureOperation.Shared.CancelAndClearResult("scene_no_longer_ready");
+            ReleaseSceneRendering();
+        }
+
+        public void ReleaseSceneRendering()
+        {
+            if (!m_BackgroundSceneRendering.Restore())
+                Mod.Log.Warn("后台自有场景渲染委托释放失败；保留所有权和错误，不自动重试");
+        }
 
         private int? LaunchFrameLimit()
         {
             return LaunchFramePolicy.Resolve(Environment.GetEnvironmentVariable(LaunchFramePolicy.EnvironmentName));
         }
 
-        /// <summary>桥接创建即应用显式启动限帧，避免后台加载及等待接口期间继承前台90帧。</summary>
+        /// <summary>桥接创建即应用显式启动限帧，避免后台加载及等待接口期间继承前台80帧。</summary>
         public void ApplyLaunchFrameLimit()
         {
             // 原生模式切换及加载会重置限帧；这里只改运行时两个参数，不重做整套画质/分辨率应用。
@@ -49,8 +77,14 @@ namespace CS2MCP
         {
             m_FrameLimitRestored = false;
             m_RuntimeSettingsLoadComplete = true;
+            // 原生加载回调可能先于isGameLoading清零，不能把新加载误判成离开旧场景。
+            m_RenderingWasReady = false;
             m_LastResourceTime = 0;
             m_LastResourceFrame = 0;
+            m_BackgroundRendering.ResetAfterLoad();
+            m_BackgroundSceneRendering.ResetAfterLoad();
+            NativeGameCameraCapture.ResetAfterLoad();
+            NativeCaptureOperation.Shared.CancelAndClearResult("scene_loaded_or_replaced");
         }
 
         /// <summary>按请求只读原生资源计数；不启用Profiler、不收集堆、不强制GC或卸载资源。</summary>
@@ -80,7 +114,9 @@ namespace CS2MCP
                 monoUsedBytes = UnityEngine.Profiling.Profiler.GetMonoUsedSizeLong(),
                 temporaryEntities = temporary, deletedEntities = deleted, renderFrame = frame,
                 renderFrameRateSincePreviousRead = renderFrameRate, sampleSeconds = renderFrameRate.HasValue ? (double?)elapsed : null,
-                applicationFocused = Application.isFocused, graphics = new { targetFrameRate = Application.targetFrameRate, vSyncCount = QualitySettings.vSyncCount },
+                applicationFocused = Application.isFocused, applicationRunInBackground = Application.runInBackground,
+                uiReadiness = ReadNativeUiLoadReadiness().state,
+                graphics = new { targetFrameRate = Application.targetFrameRate, vSyncCount = QualitySettings.vSyncCount },
                 note = "只读主线程计数；Unity/驱动统计不等于进程提交量，0可能表示平台未提供；帧率是两次读取间基础Unity帧数，不包含驱动插帧；不是根因或泄漏修复证明"
             });
         }
@@ -92,7 +128,13 @@ namespace CS2MCP
             // GameManager 在完成加载时会先重置 targetFrameRate，之后才应用本地限帧。
             var manager = Game.SceneFlow.GameManager.instance;
             if (m_FrameLimitRestored || !m_RuntimeSettingsLoadComplete || SharedSettings.instance?.graphics == null
-                || manager == null || manager.isGameLoading || manager.gameMode != Game.GameMode.Game) return;
+                || manager == null || manager.isGameLoading || manager.gameMode != Game.GameMode.Game
+                || !ReadNativeUiLoadReadiness().ready) return;
+            ApplyLaunchFrameLimit();
+            if (LaunchFrameLimit() == 30) m_BackgroundRendering.Apply(SharedSettings.instance.graphics);
+            else m_BackgroundRendering.Restore(SharedSettings.instance.graphics);
+            if (SceneRenderingRequested) m_BackgroundSceneRendering.Apply(() => NativeBackgroundSceneRenderTarget.Resolve(World));
+            else m_BackgroundSceneRendering.Restore();
             m_FrameLimitRestored = true;
             // 明确模式优先；普通启动保留本地快照。IO失败不产生每帧重试。
             try {
@@ -120,10 +162,16 @@ namespace CS2MCP
                 performancePreference = SharedSettings.instance?.general.performancePreference.ToString(),
                 automaticSaveEnabled = SharedSettings.instance?.general.autoSave,
                 frameLimitRestoredForCurrentLoad = m_FrameLimitRestored,
+                uiReadiness = ReadNativeUiLoadReadiness().state,
                 launchMode = LaunchFrameLimit().HasValue ? Environment.GetEnvironmentVariable(LaunchFramePolicy.EnvironmentName) : null,
                 launchFrameLimit = LaunchFrameLimit(),
                 driverDisplayFps = (float?)null,
-                note = "base rendering limit only; driver frame-generation multiplier and post-generation FPS are not exposed by the game"
+                backgroundRendering = m_BackgroundRendering.Read(SharedSettings.instance?.graphics,
+                    Environment.GetEnvironmentVariable(LaunchFramePolicy.EnvironmentName) == "background"),
+                backgroundSceneRendering = m_BackgroundSceneRendering.Read(SceneRenderingRequested),
+                nativeGameCapture = NativeGameCameraCapture.Read(),
+                nativeGameCaptureOperation = NativeCaptureOperation.Shared.ReadLatest(),
+                note = "基础限帧与后台原生渲染分别回读；驱动插帧后帧率及实际功耗未由游戏接口测得"
             });
         }
 
@@ -155,6 +203,17 @@ namespace CS2MCP
             }
             if (requestedLimit.HasValue && (requestedVSync ?? SharedSettings.instance.graphics.vSync))
                 return BridgeResponse.Error(400, "maxFps requires vSync=false; Unity ignores the rendering limit while vertical sync is active");
+            bool? requestedSceneSuspension = null;
+            if (request.Query.ContainsKey("suspendSceneRendering")) {
+                if (!request.TryGetBool("suspendSceneRendering", out bool suspend))
+                    return BridgeResponse.Error(400, "suspendSceneRendering must be true or false");
+                if (suspend && !(requestedMode == "background" || requestedMode == null && BackgroundMode))
+                    return BridgeResponse.Error(400, "suspendSceneRendering=true requires background mode");
+                requestedSceneSuspension = suspend;
+            }
+            // 显式切换先撤销自己的旧委托；无法撤销时不继续改模式、文件或原生画质。
+            if ((requestedMode != null || requestedSceneSuspension.HasValue) && !m_BackgroundSceneRendering.Restore())
+                return BridgeResponse.Error(409, "native scene rendering restore failed; ownership retained; no mode change applied");
             // 所有参数先校验，再持久化及应用；非法布尔值不能留下半套设置。
             if (requestedLimit.HasValue) {
                 Directory.CreateDirectory(Path.GetDirectoryName(FrameLimitPath));
@@ -163,6 +222,7 @@ namespace CS2MCP
             if (requestedVSync.HasValue) {
                 // FPS/模式切换常重复传false；相同值不再触发分辨率、整套画质和SettingsApplied回调。
                 if (SharedSettings.instance.graphics.vSync != requestedVSync.Value) {
+                    m_BackgroundRendering.Restore(SharedSettings.instance.graphics);
                     SharedSettings.instance.graphics.vSync = requestedVSync.Value;
                     SharedSettings.instance.graphics.ApplyAndSave();
                 }
@@ -171,6 +231,21 @@ namespace CS2MCP
             if (requestedLimit.HasValue) Application.targetFrameRate = requestedLimit.Value;
             if (requestedMode != null)
                 Environment.SetEnvironmentVariable(LaunchFramePolicy.EnvironmentName, requestedMode, EnvironmentVariableTarget.Process);
+            if (requestedSceneSuspension.HasValue) m_SuspendSceneRendering = requestedSceneSuspension.Value;
+            var manager = Game.SceneFlow.GameManager.instance;
+            bool renderingReady = m_RuntimeSettingsLoadComplete && manager != null
+                && !manager.isGameLoading && manager.gameMode == Game.GameMode.Game
+                && ReadNativeUiLoadReadiness().ready;
+            if (renderingReady && requestedMode != null) {
+                if (requestedMode == "foreground") m_BackgroundRendering.Restore(SharedSettings.instance.graphics);
+                else {
+                    m_BackgroundRendering.Restore(SharedSettings.instance.graphics);
+                    m_BackgroundRendering.Apply(SharedSettings.instance.graphics);
+                }
+            } else if (renderingReady && Environment.GetEnvironmentVariable(LaunchFramePolicy.EnvironmentName) == "background")
+                m_BackgroundRendering.Apply(SharedSettings.instance.graphics);
+            if (renderingReady && SceneRenderingRequested)
+                m_BackgroundSceneRendering.Apply(() => NativeBackgroundSceneRenderTarget.Resolve(World));
             return GetGraphicsSettings();
         }
 

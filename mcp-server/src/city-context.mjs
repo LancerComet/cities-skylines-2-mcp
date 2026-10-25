@@ -31,6 +31,10 @@ export function assertLoadedCity(context,state) {
   const error=new Error('当前加载GUID或城市不符、身份未知或加载中；停止本城调用和健康采样。');
   error.code='CITY_CONTEXT_MISMATCH';throw error;
  }
+ if(state.uiReadiness && state.uiReadiness.readyForRuntimeSettings!==true) {
+  const error=new Error('城市数据已加载，但原生加载覆盖屏/任务尚未完成或未知；停止批次，不绕过原生暂停。');
+  error.code='CITY_UI_NOT_READY';throw error;
+ }
 }
 export function assertRecordOwner(context,owner) {
  const normalized=path=>process.platform==='win32'?resolve(path).toLowerCase():resolve(path);

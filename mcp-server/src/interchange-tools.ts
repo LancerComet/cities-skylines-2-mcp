@@ -42,16 +42,18 @@ const layoutPart = z.object({prefab:z.string().min(1),curve:z.object({a:layoutPo
   nodes:z.object({start:z.number().int().min(-1).max(4096),end:z.number().int().min(-1).max(4096)}).strict(),
   parentMesh:z.object({start:z.number().int().min(-1).max(0),end:z.number().int().min(-1).max(0)}).strict().optional(),
   upgrades:z.object({general:z.string().max(256),left:z.string().max(256),right:z.string().max(256)}).strict().optional()}).strict();
-export function registerRoadLayoutTool(server:McpServer, requireVersion:()=>Promise<void>) {
+export function registerRoadLayoutTool(server:McpServer, requireVersion:()=>Promise<void>, requireProfileVersion:()=>Promise<void>) {
   server.registerTool('cs2_build_road_layout',{
-    title:'以原生道路定义独立重建立交布局',
-    description:'明确指定全部正常道路、三维曲线、共享节点、高程固定方式和升级，复用原生CreateSubNet进行统一预览、Validation和逐道路正常收费。曲线y是相对原点坐标；桥接在世界坐标按各处实际地面校验原生高程范围，包含共享节点。默认只预览；不改源资产，不依赖临时或不可见母体。需要桥接0.10.2。',
+    title:'以原生道路、轨道或步道定义重建完整布局',
+    description:'明确指定正常可见道路、轨道或步道、三维曲线、共享节点、高程固定方式和升级，走原生统一预览、Validation和正常收费。轨道/步道和明示纵断面需0.10.5；管线和航道不在此入口。曲线y相对原点，实际世界高程范围含共享节点。默认只预览；此贡献不含任意网络替换或replaceRoads参数，避免重复待审PR4职责。不改源资产、不依赖不可见母体。',
     annotations:{readOnlyHint:false,destructiveHint:true,openWorldHint:false},
-    inputSchema:{x:z.number().finite().min(-7168).max(7168),z:z.number().finite().min(-7168).max(7168),rotation:z.number().finite().default(0),
-      elevation:z.number().finite().min(-30).max(60).default(0),dryRun:z.boolean().default(true),segments:z.array(layoutPart).min(1).max(250)},
+    inputSchema:z.object({x:z.number().finite().min(-7168).max(7168),z:z.number().finite().min(-7168).max(7168),rotation:z.number().finite().default(0),
+      elevation:z.number().finite().min(-30).max(60).default(0),dryRun:z.boolean().default(true),segments:z.array(layoutPart).min(1).max(250),
+      preserveVerticalProfile:z.boolean().optional().describe('0.10.5：原生拆分后保留明示曲线纵断面；仅本次定义，保留正常碰撞/解锁/用地/收费；无法对应或既有节点高度不符即拒绝。')}).strict(),
   },async(args)=>{
     try {
-      await requireVersion();
+      if(args.preserveVerticalProfile===true)await requireProfileVersion();
+      else await requireVersion();
       const body=JSON.stringify(args);
       if(Buffer.byteLength(body,'utf8')>512000)throw new Error('布局参数超过512KB，未发送施工请求。');
       return jsonResult(await bridgeJson('/build/road-layout',30000,undefined,{method:'POST',headers:{'Content-Type':'application/json; charset=utf-8'},body}));

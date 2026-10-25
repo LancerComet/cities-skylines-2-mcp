@@ -68,6 +68,30 @@ namespace CS2MCP
             StartCoroutine(CaptureRoutine(request));
         }
 
+        public void CaptureNative(string captureId, Func<byte[]> capture, Func<object> diagnostics)
+        {
+            StartCoroutine(CaptureNativeAtEndOfFrame(captureId, capture, diagnostics));
+        }
+
+        private IEnumerator CaptureNativeAtEndOfFrame(string id, Func<byte[]> capture, Func<object> diagnostics)
+        {
+            bool finished = false;
+            try {
+                // 必须离开ECS请求处理及其作业调度阶段，再沿原生相机路径取景。
+                yield return new WaitForEndOfFrame();
+                if (!NativeCaptureOperation.Shared.TryMarkRunning(id)) { finished = true; yield break; }
+                try {
+                    byte[] png = capture();
+                    NativeCaptureOperation.Shared.Complete(id, png, diagnostics());
+                } catch (Exception e) {
+                    NativeCaptureOperation.Shared.Fail(id, e.GetType().Name + ": " + e.Message);
+                }
+                finished = true;
+            } finally {
+                if (!finished) NativeCaptureOperation.Shared.Fail(id, "native_capture_coroutine_interrupted");
+            }
+        }
+
         public void Save(BridgeRequest request, string name, bool includePreview)
         {
             if (includePreview && !HasUsableGameFrame()) {

@@ -73,7 +73,7 @@ dotnet run --project tests/Bridge.Diagnostics/Bridge.Diagnostics.csproj
 
 本地开发版本已验证后台无缩略图保存、重载限帧与独立布局的高程正反例；贡献版本另行通过构建、MCP 契约及 C# 诊断，未部署进游戏。这些检查不能替代完整异步会话、搬迁、地形、多种资产布局及模组版本组合的实机验收；失焦补偿和里程碑通知未触发的分支也不算实机通过。内存预算保护不证明持续内存增长已经解决。
 
-HTTP 客户端保持无凭据 loopback HTTP origin、禁止重定向。本贡献新增的写入与预览入口在调用处显式使用 POST；基准已有入口保留原有方法。传输层不按路径自动改写方法或转发 token。通用 POST/Host/Origin/token 防护由独立安全贡献负责。服务器仍严格验证请求目标、版本、Content-Length 与 Transfer-Encoding，保留 UTF-8 请求体和空格/字面加号区分。
+HTTP客户端保持无凭据loopback origin及禁止重定向。0.10.5继承官方已合入的#3：共享客户端按路径发送POST并转发已有进程配置的token，服务端先核Host／Origin／token再入队。正常预览同用POST，但应用结果独立判断。公开弹窗读写均用POST，只有明确dismiss才按变更处理。服务器继续严格验证请求目标、版本、Content-Length与Transfer-Encoding，保UTF-8及空格／字面加号区分；没有自动设置系统token。
 
 ## 0.10.2 查询与施工修正
 

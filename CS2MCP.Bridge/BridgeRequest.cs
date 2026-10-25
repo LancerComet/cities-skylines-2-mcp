@@ -18,6 +18,9 @@ namespace CS2MCP
         public string Path;
         public Dictionary<string, string> Query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public string Body;
+        public string Host;
+        public string Origin;
+        public string Token;
 
         private readonly TaskCompletionSource<BridgeResponse> m_Completion =
             new TaskCompletionSource<BridgeResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
