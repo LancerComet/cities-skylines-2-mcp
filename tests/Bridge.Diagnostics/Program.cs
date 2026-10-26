@@ -26,24 +26,13 @@ Check(request.TryGetFloat("value", out float parsed) && parsed == 1.25f, "finite
 Check(JObject.Parse(Encoding.UTF8.GetString(BridgeResponse.Error(409, "partial", true).Body))["mayHaveApplied"].Value<bool>(),
     "partial application metadata lost");
 
-const ulong GiB = 1024UL * 1024 * 1024;
-RuntimeMemory.Snapshot Budget(ulong limit, ulong available, long privateBytes)
-{
-    var budget = new RuntimeMemory.Snapshot();
-    budget.SetCommitBudget(limit, available, privateBytes);
-    return budget;
-}
-Check(!new RuntimeMemory.Snapshot().constructionAllowed, "unknown counters admitted");
-Check(!Budget(0, 0, 1).constructionAllowed, "zero commit limit admitted");
-Check(!Budget(100 * GiB, 101 * GiB, 1).constructionAllowed, "invalid available commit admitted");
-Check(!Budget(100 * GiB, 80 * GiB, 0).constructionAllowed, "zero process counter admitted");
-Check(!Budget(100 * GiB, 15 * GiB, (long)GiB).constructionAllowed, "reserve boundary admitted");
-Check(Budget(100 * GiB, 16 * GiB, (long)(64 * GiB)).constructionAllowed, "sufficient budget rejected");
-Check(!Budget(100 * GiB, 80 * GiB, (long)(65 * GiB)).constructionAllowed, "process boundary admitted");
-Check(!Budget(8 * GiB, 2 * GiB, (long)GiB).constructionAllowed, "minimum reserve boundary admitted");
-Check(Budget(100 * GiB, 15 * GiB, (long)GiB).constructionFailureReason == "commit_reserve", "reserve reason lost");
-Check(Budget(100 * GiB, 80 * GiB, (long)(65 * GiB)).constructionFailureReason == "process_commit_share", "process ceiling reason lost");
-Check(Budget(0, 0, 1).constructionFailureReason == "counter_unavailable", "unknown counter reason lost");
+// Run the same production-linked admission cases on Windows and Linux CI.
+// Capacity belongs to the requested allocation; physical pressure and a large
+// private working set must not become a blanket stop/restart policy.
+var memoryChecks = JObject.Parse(MemoryPressureProbe.Run());
+Check(memoryChecks["productionSourcesLinked"].Value<bool>(), "memory diagnostic detached from production sources");
+Check(memoryChecks["passed"].Value<int>() >= 20, "memory admission coverage unexpectedly reduced");
+checks += memoryChecks["passed"].Value<int>();
 Check(LaunchFramePolicy.Resolve("background") == 30, "background mode incorrect");
 Check(LaunchFramePolicy.Resolve("foreground") == 90, "foreground mode incorrect");
 foreach (string mode in new[] { null, "", "BACKGROUND", "unknown" })

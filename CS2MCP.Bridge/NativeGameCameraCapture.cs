@@ -30,7 +30,7 @@ namespace CS2MCP
             s_CameraRestored = s_ActiveTargetRestored = s_ResourcesReleased = null;
         }
 
-        internal static byte[] Capture(Camera camera, int width)
+        internal static int GetCaptureHeight(Camera camera, int width)
         {
             if (camera == null || camera.cameraType != CameraType.Game || !camera.enabled)
                 throw new InvalidOperationException("native_game_camera_unavailable");
@@ -41,6 +41,14 @@ namespace CS2MCP
             int height = Math.Max(1, (int)Math.Round(width / aspect));
             if (height > 2160 || (long)width * height > 3840L * 2160)
                 throw new InvalidOperationException("native_capture_pixel_budget_exceeded");
+            return height;
+        }
+
+        internal static byte[] Capture(Camera camera, int width)
+        {
+            int height = GetCaptureHeight(camera, width);
+            var admission = RuntimeMemory.Read().Assess(MemoryOperationBudget.Capture(width, height));
+            if (!admission.allowed) throw new InvalidOperationException("native_capture_" + admission.reason);
             var asset = QualitySettings.GetRenderPipelineAssetAt(QualitySettings.GetQualityLevel()) as HDRenderPipelineAsset;
             if (asset == null) throw new InvalidOperationException("native_hdrp_asset_unavailable");
             var shader = Shader.Find("Hidden/ScreenCaptureCompose");

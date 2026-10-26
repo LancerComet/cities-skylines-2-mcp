@@ -21,11 +21,68 @@ namespace CS2MCP
         private int m_LastResourceFrame;
         private readonly BackgroundRenderingPolicy m_BackgroundRendering = new BackgroundRenderingPolicy();
         private readonly BackgroundSceneRenderingPolicy m_BackgroundSceneRendering = new BackgroundSceneRenderingPolicy();
-        private bool m_SuspendSceneRendering = true;
+        private readonly BackgroundFrameOutputPolicy m_BackgroundFrameOutput = new BackgroundFrameOutputPolicy();
+        // 实载零回调已反证仅绑定目标不足以恢复隐藏渲染；改为独立显式诊断能力。
+        private bool m_OffscreenSceneOutput = false;
+        private readonly BackgroundSceneFrameLoop m_BackgroundSceneFrames = new BackgroundSceneFrameLoop();
+        private bool m_RenderBackgroundScene;
+        private readonly BackgroundCommandSubmission m_BackgroundCommandSubmission = new BackgroundCommandSubmission();
+        private bool m_SubmitBackgroundCommands;
+        // 尚无实际回调/内存收益证明，不默认改变原生场景绘制；独立显式能力保留。
+        private bool m_SuspendSceneRendering = false;
         private bool m_RenderingWasReady;
 
         private bool BackgroundMode => Environment.GetEnvironmentVariable(LaunchFramePolicy.EnvironmentName) == "background";
         private bool SceneRenderingRequested => BackgroundMode && m_SuspendSceneRendering;
+        private bool FrameOutputRequested => BackgroundMode && (m_OffscreenSceneOutput || m_RenderBackgroundScene) && !m_SuspendSceneRendering;
+        private bool SceneFramesRequested => BackgroundMode && m_RenderBackgroundScene && !m_SuspendSceneRendering;
+        private bool CommandSubmissionRequested => BackgroundMode && m_SubmitBackgroundCommands;
+
+        private bool CommandSubmissionReady()
+        {
+            var manager = Game.SceneFlow.GameManager.instance;
+            return World.IsCreated && m_RuntimeSettingsLoadComplete && m_FrameLimitRestored
+                && manager != null && !manager.isGameLoading && manager.gameMode == Game.GameMode.Game;
+        }
+
+        private void StopCommandSubmission()
+        {
+            m_BackgroundCommandSubmission.SetRequested(false);
+            BackgroundCommandSubmissionRunner.Release(m_BackgroundCommandSubmission);
+        }
+
+        private bool SceneFrameReady() => CommandSubmissionReady()
+            && ReadClockGate(out _, out _, out bool barrier) && !barrier;
+
+        private void StopSceneFrames()
+        {
+            m_BackgroundSceneFrames.SetRequested(false);
+            BackgroundSceneFrameRunner.Release(m_BackgroundSceneFrames);
+        }
+
+        private void RestoreSceneFrameOutput()
+        {
+            if (!m_BackgroundFrameOutput.Restore()) throw new InvalidOperationException("native_scene_frame_output_restore_failed");
+        }
+
+        private void ReconcileSceneFrames()
+        {
+            if (!SceneFramesRequested) { StopSceneFrames(); return; }
+            if (m_BackgroundSceneFrames.Requested) return;
+            m_BackgroundSceneFrames.SetRequested(true);
+            try { BackgroundSceneFrameRunner.Bind(m_BackgroundSceneFrames, SceneFrameReady,
+                m_BackgroundFrameOutput.RenderFrameIfNeeded, RestoreSceneFrameOutput); }
+            catch (Exception e) { m_BackgroundSceneFrames.FailAndRelease(e, RestoreSceneFrameOutput); }
+        }
+
+        private void ReconcileCommandSubmission()
+        {
+            if (!CommandSubmissionRequested) { StopCommandSubmission(); return; }
+            if (m_BackgroundCommandSubmission.Requested) return;
+            m_BackgroundCommandSubmission.SetRequested(true);
+            try { BackgroundCommandSubmissionRunner.Bind(m_BackgroundCommandSubmission, CommandSubmissionReady); }
+            catch (Exception e) { m_BackgroundCommandSubmission.SetupFailed(e); }
+        }
 
         /// <summary>只在离开已就绪场景时释放一次；失败保留所有权，不在普通帧重试。</summary>
         public void ReconcileRenderingLifecycle()
@@ -44,8 +101,12 @@ namespace CS2MCP
 
         public void ReleaseSceneRendering()
         {
+            StopSceneFrames();
+            StopCommandSubmission();
             if (!m_BackgroundSceneRendering.Restore())
                 Mod.Log.Warn("后台自有场景渲染委托释放失败；保留所有权和错误，不自动重试");
+            if (!m_BackgroundFrameOutput.Restore())
+                Mod.Log.Warn("后台自有输出恢复失败；保留所有权和错误，不自动重试");
         }
 
         private int? LaunchFrameLimit()
@@ -81,8 +142,14 @@ namespace CS2MCP
             m_RenderingWasReady = false;
             m_LastResourceTime = 0;
             m_LastResourceFrame = 0;
+            StopSceneFrames();
+            m_RenderBackgroundScene = false;
+            StopCommandSubmission();
+            m_SubmitBackgroundCommands = false;
             m_BackgroundRendering.ResetAfterLoad();
             m_BackgroundSceneRendering.ResetAfterLoad();
+            if (!m_BackgroundFrameOutput.Restore())
+                Mod.Log.Warn("新场景自有输出恢复失败；保留旧对象所有权，不向新相机重复分配");
             NativeGameCameraCapture.ResetAfterLoad();
             NativeCaptureOperation.Shared.CancelAndClearResult("scene_loaded_or_replaced");
         }
@@ -117,6 +184,10 @@ namespace CS2MCP
                 applicationFocused = Application.isFocused, applicationRunInBackground = Application.runInBackground,
                 uiReadiness = ReadNativeUiLoadReadiness().state,
                 graphics = new { targetFrameRate = Application.targetFrameRate, vSyncCount = QualitySettings.vSyncCount },
+                backgroundFrameOutput = m_BackgroundFrameOutput.Read(FrameOutputRequested),
+                backgroundSceneFrames = m_BackgroundSceneFrames.Read(),
+                backgroundCommandSubmission = m_BackgroundCommandSubmission.Read(),
+                graphicsDeviceType = SystemInfo.graphicsDeviceType.ToString(),
                 note = "只读主线程计数；Unity/驱动统计不等于进程提交量，0可能表示平台未提供；帧率是两次读取间基础Unity帧数，不包含驱动插帧；不是根因或泄漏修复证明"
             });
         }
@@ -133,9 +204,12 @@ namespace CS2MCP
             ApplyLaunchFrameLimit();
             if (LaunchFrameLimit() == 30) m_BackgroundRendering.Apply(SharedSettings.instance.graphics);
             else m_BackgroundRendering.Restore(SharedSettings.instance.graphics);
+            if (FrameOutputRequested) m_BackgroundFrameOutput.Apply(() => NativeBackgroundFrameOutput.Resolve(World));
             if (SceneRenderingRequested) m_BackgroundSceneRendering.Apply(() => NativeBackgroundSceneRenderTarget.Resolve(World));
             else m_BackgroundSceneRendering.Restore();
             m_FrameLimitRestored = true;
+            ReconcileSceneFrames();
+            ReconcileCommandSubmission();
             // 明确模式优先；普通启动保留本地快照。IO失败不产生每帧重试。
             try {
                 int? explicitLimit = LaunchFrameLimit();
@@ -169,6 +243,9 @@ namespace CS2MCP
                 backgroundRendering = m_BackgroundRendering.Read(SharedSettings.instance?.graphics,
                     Environment.GetEnvironmentVariable(LaunchFramePolicy.EnvironmentName) == "background"),
                 backgroundSceneRendering = m_BackgroundSceneRendering.Read(SceneRenderingRequested),
+                backgroundFrameOutput = m_BackgroundFrameOutput.Read(FrameOutputRequested),
+                backgroundSceneFrames = m_BackgroundSceneFrames.Read(),
+                backgroundCommandSubmission = m_BackgroundCommandSubmission.Read(),
                 nativeGameCapture = NativeGameCameraCapture.Read(),
                 nativeGameCaptureOperation = NativeCaptureOperation.Shared.ReadLatest(),
                 note = "基础限帧与后台原生渲染分别回读；驱动插帧后帧率及实际功耗未由游戏接口测得"
@@ -211,9 +288,47 @@ namespace CS2MCP
                     return BridgeResponse.Error(400, "suspendSceneRendering=true requires background mode");
                 requestedSceneSuspension = suspend;
             }
-            // 显式切换先撤销自己的旧委托；无法撤销时不继续改模式、文件或原生画质。
-            if ((requestedMode != null || requestedSceneSuspension.HasValue) && !m_BackgroundSceneRendering.Restore())
+            bool? requestedFrameOutput = null;
+            if (request.Query.ContainsKey("offscreenSceneOutput")) {
+                if (!request.TryGetBool("offscreenSceneOutput", out bool output))
+                    return BridgeResponse.Error(400, "offscreenSceneOutput must be true or false");
+                if (output && !(requestedMode == "background" || requestedMode == null && BackgroundMode))
+                    return BridgeResponse.Error(400, "offscreenSceneOutput=true requires background mode");
+                requestedFrameOutput = output;
+            }
+            bool? requestedCommandSubmission = null;
+            bool? requestedSceneFrames = null;
+            if (request.Query.ContainsKey("renderBackgroundScene")) {
+                if (!request.TryGetBool("renderBackgroundScene", out bool render))
+                    return BridgeResponse.Error(400, "renderBackgroundScene must be true or false");
+                if (render && !(requestedMode == "background" || requestedMode == null && BackgroundMode))
+                    return BridgeResponse.Error(400, "renderBackgroundScene=true requires background mode");
+                if (render && requestedFrameOutput == false)
+                    return BridgeResponse.Error(400, "renderBackgroundScene=true conflicts with explicit output restoration");
+                requestedSceneFrames = render;
+            }
+            // 恢复原输出也必须停止借用该输出的循环，即使被动输出从未启用。
+            if (requestedFrameOutput == false) requestedSceneFrames = false;
+            if (request.Query.ContainsKey("submitBackgroundCommands")) {
+                if (!request.TryGetBool("submitBackgroundCommands", out bool submit))
+                    return BridgeResponse.Error(400, "submitBackgroundCommands must be true or false");
+                if (submit && !(requestedMode == "background" || requestedMode == null && BackgroundMode))
+                    return BridgeResponse.Error(400, "submitBackgroundCommands=true requires background mode");
+                requestedCommandSubmission = submit;
+            }
+            bool modeChanged = requestedMode != null && requestedMode != Environment.GetEnvironmentVariable(LaunchFramePolicy.EnvironmentName);
+            bool sceneChanged = requestedSceneSuspension.HasValue && requestedSceneSuspension.Value != m_SuspendSceneRendering;
+            bool outputChanged = requestedFrameOutput.HasValue && requestedFrameOutput.Value != m_OffscreenSceneOutput;
+            bool framesChanged = requestedSceneFrames.HasValue && requestedSceneFrames.Value != m_RenderBackgroundScene;
+            bool nativeSettingsReset = requestedVSync.HasValue && SharedSettings.instance.graphics.vSync != requestedVSync.Value;
+            if (modeChanged || sceneChanged || outputChanged || framesChanged || nativeSettingsReset) StopSceneFrames();
+            // 同模式限帧不反复恢复/禁用全部效果，也不重新注册场景委托。
+            if ((modeChanged || sceneChanged) && !m_BackgroundSceneRendering.Restore())
                 return BridgeResponse.Error(409, "native scene rendering restore failed; ownership retained; no mode change applied");
+            if ((modeChanged || outputChanged || framesChanged || sceneChanged || nativeSettingsReset) && !m_BackgroundFrameOutput.Restore())
+                return BridgeResponse.Error(409, "native frame output restore failed; ownership retained; no mode change applied");
+            if (modeChanged || requestedCommandSubmission.HasValue && requestedCommandSubmission.Value != m_SubmitBackgroundCommands)
+                StopCommandSubmission();
             // 所有参数先校验，再持久化及应用；非法布尔值不能留下半套设置。
             if (requestedLimit.HasValue) {
                 Directory.CreateDirectory(Path.GetDirectoryName(FrameLimitPath));
@@ -232,11 +347,14 @@ namespace CS2MCP
             if (requestedMode != null)
                 Environment.SetEnvironmentVariable(LaunchFramePolicy.EnvironmentName, requestedMode, EnvironmentVariableTarget.Process);
             if (requestedSceneSuspension.HasValue) m_SuspendSceneRendering = requestedSceneSuspension.Value;
+            if (requestedFrameOutput.HasValue) m_OffscreenSceneOutput = requestedFrameOutput.Value;
+            if (requestedSceneFrames.HasValue) m_RenderBackgroundScene = requestedSceneFrames.Value;
+            if (requestedCommandSubmission.HasValue) m_SubmitBackgroundCommands = requestedCommandSubmission.Value;
             var manager = Game.SceneFlow.GameManager.instance;
             bool renderingReady = m_RuntimeSettingsLoadComplete && manager != null
                 && !manager.isGameLoading && manager.gameMode == Game.GameMode.Game
                 && ReadNativeUiLoadReadiness().ready;
-            if (renderingReady && requestedMode != null) {
+            if (renderingReady && modeChanged) {
                 if (requestedMode == "foreground") m_BackgroundRendering.Restore(SharedSettings.instance.graphics);
                 else {
                     m_BackgroundRendering.Restore(SharedSettings.instance.graphics);
@@ -244,8 +362,11 @@ namespace CS2MCP
                 }
             } else if (renderingReady && Environment.GetEnvironmentVariable(LaunchFramePolicy.EnvironmentName) == "background")
                 m_BackgroundRendering.Apply(SharedSettings.instance.graphics);
+            if (renderingReady && FrameOutputRequested)
+                m_BackgroundFrameOutput.Apply(() => NativeBackgroundFrameOutput.Resolve(World));
             if (renderingReady && SceneRenderingRequested)
                 m_BackgroundSceneRendering.Apply(() => NativeBackgroundSceneRenderTarget.Resolve(World));
+            if (renderingReady) { ReconcileSceneFrames(); ReconcileCommandSubmission(); }
             return GetGraphicsSettings();
         }
 

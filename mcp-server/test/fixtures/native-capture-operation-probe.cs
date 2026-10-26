@@ -19,12 +19,13 @@ namespace CS2MCP
   {
    var cases=new List<string>();var now=new DateTime(2030,1,1,0,0,0,DateTimeKind.Utc);
    var op=new NativeCaptureOperation(()=>now);string guid="1234567890abcdef1234567890abcdef";
-   Check(op.TryBegin(guid,1,1280,out var a),"first begin");Check(!op.TryBegin(guid,1,1280,out var duplicate)&&duplicate.captureId==a.captureId,"unknown begin does not duplicate");
+   Check(!op.IsInFlight,"default has no camera borrower");
+   Check(op.TryBegin(guid,1,1280,out var a)&&op.IsInFlight,"first begin");Check(!op.TryBegin(guid,1,1280,out var duplicate)&&duplicate.captureId==a.captureId,"unknown begin does not duplicate");
    cases.Add("single_pending_capture_rejects_duplicate_start");
    Check(op.TryMarkRunning(a.captureId)&&!op.TryMarkRunning(a.captureId),"one render dispatch");
-   Check(op.Read(a.captureId,out var absent).status=="running"&&absent==null,"running status");
+   Check(op.Read(a.captureId,out var absent).status=="running"&&absent==null&&op.IsInFlight,"running status");
    byte[] png={137,80,78,71,13,10,26,10,0};Check(op.Complete(a.captureId,png,new{restored=true}),"completion");
-   Check(op.Read(a.captureId,out var first).resultAvailable&&op.Read(a.captureId,out var second).resultAvailable&&ReferenceEquals(first,png)&&ReferenceEquals(first,second),"same retained result");
+   Check(!op.IsInFlight&&op.Read(a.captureId,out var first).resultAvailable&&op.Read(a.captureId,out var second).resultAvailable&&ReferenceEquals(first,png)&&ReferenceEquals(first,second),"same retained result");
    cases.Add("late_completion_and_repeat_retrieval_do_not_render_again");
    Check(op.TryBegin(guid,2,1280,out var b),"next capture");Check(op.Read(a.captureId,out absent).status=="not_found"&&!op.Complete(a.captureId,png,null),"stale result cannot replace next");
    op.Fail(b.captureId,"native_failed");Check(op.Read(b.captureId,out absent).error=="native_failed"&&absent==null,"failure stored");

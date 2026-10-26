@@ -1,5 +1,13 @@
 # CS2MCP — An MCP Server for Cities: Skylines II
 
+## Memory admission and explicit hidden rendering (0.10.6)
+
+The bridge now distinguishes system/process commit availability, virtual address space and physical residency. Physical pressure and process-share percentages are warnings, rather than blanket construction, capture or save rejection. New allocations are assessed against a bounded operation-specific estimate; reads, saves and cancellation remain available. No warning automatically restarts the game or changes OS memory settings.
+
+The optional `offscreenSceneOutput`, `renderBackgroundScene` and `submitBackgroundCommands` settings require bridge 0.10.6 and default to false. Explicit hidden scene frames reuse the enabled game camera and one owned render target at frame end. Loading, native menu/save barriers, captures and already-rendered frames yield; failures stop without automatic retry. Disabling output, leaving the scene or disposal releases only owned resources. Native preview capture restores the target but clears `forceIntoRenderTexture`; that transient flag no longer invalidates texture ownership. Attempted/returned calls and native camera callbacks are separate from GPU completion and measured memory benefit. No periodic screenshot, pixel readback or forced collection maintains the loop.
+
+Public explicit presets remain 30/90 FPS and unmarked starts preserve player settings. Rendering, simulation speed and throughput are independent. Save completion still requires file-freshness, inner GUID and CRC/hash checks; an extra copy is only needed for a concrete recovery gap, with a defined cleanup condition.
+
 **English** | [简体中文](README.CHS.md)
 
 Version 0.10.5 builds on upstream 72bd7e0 (merged HTTP hardening #3), projects verified native lifecycle, UI-readiness, layout and inspection improvements, and retains the exclusions of pending #4. See [scope](docs/contribution-scope.md) and [HTTP contract](docs/http-bridge-security.md).
@@ -36,7 +44,8 @@ Cities: Skylines II
 # 1. Build the in-game mod (build only; does not deploy by default)
 dotnet build CS2MCP.Bridge\CS2MCP.Bridge.csproj
 
-# After normally exiting the game and backing up the installed DLL/PDB:
+# After normally exiting the game, confirm a usable recovery artifact exists
+# (retain a temporary copy only if needed), then deploy explicitly:
 dotnet build CS2MCP.Bridge\CS2MCP.Bridge.csproj -p:DeployToLocalMods=true
 
 # 2. Build the MCP server

@@ -167,7 +167,7 @@ namespace CS2MCP
                         failurePhase = nativeSaveStarted ? "native_save_pipeline" : "before_native_save" }, 500));
                 }
                 else request.Complete(BridgeResponse.Json(new { name, pipelineCompleted = true, previewIncluded = includePreview,
-                    note = "原生异步保存管线已结束；仍须核文件更新时间、完整性及独立备份，不以原生Task返回值宣称落盘成功" }));
+                    note = "原生异步保存管线已结束；仍须核文件更新时间、CRC及哈希，不以原生Task返回值宣称落盘成功；不自动创建独立副本" }));
                 reported = true;
             }
             } finally {
@@ -196,6 +196,9 @@ namespace CS2MCP
                 if (!Application.isFocused || Camera.main == null || Screen.width < 320 || Screen.height < 200
                     || Screen.width > 8192 || Screen.height > 8192)
                     throw new InvalidOperationException("游戏没有可核实的前台渲染帧；先恢复游戏窗口再截图");
+                // 首次捕获仍分配原游戏帧，不能只按缩小后的请求宽度预算。
+                var captureError = RequestMemoryAdmission.Check(RuntimeMemory.Read(), MemoryOperationBudget.Capture(Screen.width, Screen.height), enqueued: true);
+                if (captureError != null) { request.Complete(captureError); yield break; }
                 captured = ScreenCapture.CaptureScreenshotAsTexture();
                 if (captured == null) throw new InvalidOperationException("游戏帧捕获失败");
 

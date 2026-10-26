@@ -29,6 +29,11 @@ namespace CS2MCP
         }
         internal NativeCaptureOperation(Func<DateTime> clock = null) { m_Clock = clock ?? (() => DateTime.UtcNow); }
 
+        internal bool IsInFlight
+        {
+            get { lock (m_Gate) { ExpireQueued(); return m_Current?.Status == "queued" || m_Current?.Status == "running"; } }
+        }
+
         private void ExpireQueued()
         {
             if (m_Current?.Status != "queued" || (m_Clock() - m_Current.Created).TotalSeconds <= 30) return;

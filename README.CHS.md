@@ -1,5 +1,13 @@
 # CS2MCP — Cities: Skylines II 的 MCP 服务器
 
+## 0.10.6：按操作内存准入与显式后台场景帧
+
+系统/进程可提交、虚拟地址空间与物理驻留分别读取；物理压力和进程占比只告警，不再作为全部施工或取景的硬门槛。仅按本次额外分配估计及真实可提交量判断，保留读取、保存和取消；不自动重启或修改系统内存设置。
+
+新增默认关闭的 `offscreenSceneOutput`、`renderBackgroundScene`、`submitBackgroundCommands`，需公共桥接0.10.6。原相机帧末循环只持有一个自有目标，原生加载/菜单/保存屏障及取景时让出；正常已绘本帧不重复，失败停止，不周期截图、读回图片或强制GC。原生保存归还原目标但清force标志，不再误当纹理所有权丢失；显式关闭、换场景和销毁精确恢复。调用/回调与GPU完成、内存收益分开验证。
+
+公开预设保留30/90帧，未标记启动保玩家设置。正常保存核文件新鲜度、内层GUID和CRC/SHA；有具体恢复缺口才另建最小临时副本，失效及时清理。
+
 [English](README.md) | **简体中文**
 
 0.10.5基于官方72bd7e0，继承已合入的HTTP防护#3；投影已验证的原生生命周期、加载就绪、布局与只读诊断改进，继续排除待审#4的重复职责。见[贡献范围](docs/contribution-scope.md)和[HTTP契约](docs/http-bridge-security.md)。
@@ -36,7 +44,7 @@ Cities: Skylines II
 # 1. 编译游戏内 Mod（默认只构建，不部署）
 dotnet build CS2MCP.Bridge\CS2MCP.Bridge.csproj
 
-# 正常退出游戏并备份已安装DLL/PDB后，显式部署：
+# 正常退出游戏，确认已有有效恢复制品（仅缺少时临时保留），然后显式部署：
 dotnet build CS2MCP.Bridge\CS2MCP.Bridge.csproj -p:DeployToLocalMods=true
 
 # 2. 构建 MCP server

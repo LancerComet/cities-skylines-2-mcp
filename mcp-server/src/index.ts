@@ -17,7 +17,7 @@ import { z } from "zod";
 async function requirePrecisionBridge(minimumOrLabel: number | string = 10002, labelOrMinimum: string | number = "正常原生控制") {
   const requested = typeof minimumOrLabel === "number" ? minimumOrLabel
     : typeof labelOrMinimum === "number" ? labelOrMinimum : 10002;
-  // 生产0.10.2之后的增量首次进入公共0.10.5；不能让旧公共版忽略新参数。
+  // 生产0.10.2之后的既有增量进入公共0.10.5；新协议传明确的公共最低版本。
   const minimum = requested < 10000 ? requested > 9077 ? 10005 : 10002 : requested;
   const label = typeof minimumOrLabel === "string" ? minimumOrLabel : String(labelOrMinimum);
   const ping = await bridgeJson("/ping",3000) as {version?:string};
@@ -45,7 +45,7 @@ function validateRoadPath(segments:z.infer<typeof roadPathSegment>[]) {
   }
 }
 
-const server = new McpServer({ name: "cs2-mcp", version: "0.10.5" });
+const server = new McpServer({ name: "cs2-mcp", version: "0.10.6" });
 
 server.registerTool("cs2_facility_parking_fees", {
   title: "读取全部公共设施停车费",
@@ -72,7 +72,7 @@ server.registerTool("cs2_facility_catalog", {
 
 server.registerTool("cs2_growable_catalog", {
   title: "全部已注册正常成长建筑尺寸与资格",
-  description: "一次只读快照基础/已加载DLC及区域成长Prefab的主题、分区密度、等级、原生格宽深、住宅属性、可选工作数据及独立内容/解锁资格。单列手放标志性/升级/产业占位，正常未来解锁保留；返回独立生成查询对账和完整性，不扫描现场建筑或写内容缓存，不把子集/目录当实际成长。需要桥接0.10.5。",
+  description: "一次只读快照基础/已加载DLC及区域成长Prefab的主题、分区密度、等级、原生格宽深、住宅属性、可选工作数据及独立内容/解锁资格。单列手放标志性/升级/产业占位，正常未来解锁保留；返回独立生成查询对账和完整性，不扫描现场建筑或写内容缓存，不把子集/目录当实际成长。需要桥接0.10.6。",
   annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},inputSchema:{},
 },async()=>{try{await requirePrecisionBridge(9079,"全部正常成长目录");return jsonResult(await bridgeJson("/prefabs/growables",60000));}catch(e){return errorResult(e);}});
 
@@ -91,7 +91,7 @@ server.registerTool("cs2_move_building", {
 
 server.registerTool("cs2_relocate_building_upgrade", {
   title: "正常吸附搬迁已装独立建筑扩建",
-  description: "仅已装独立服务扩建；明确本次加载GUID和真实owner index:version，沿原生OwnerSide四侧/格点/高度与Relocate保原child及完整安装引用。默认完整原生预览，dryRun=false才收费应用；固定扩建/成长/产业占位/岸线模块排除。应用后真实车行步行和告警另验，未知结果不重放。需要桥接0.10.5。",
+  description: "仅已装独立服务扩建；明确本次加载GUID和真实owner index:version，沿原生OwnerSide四侧/格点/高度与Relocate保原child及完整安装引用。默认完整原生预览，dryRun=false才收费应用；固定扩建/成长/产业占位/岸线模块排除。应用后真实车行步行和告警另验，未知结果不重放。需要桥接0.10.6。",
   annotations:{readOnlyHint:false,destructiveHint:true,openWorldHint:false},
   inputSchema:{index:z.number().int().min(1),version:z.number().int().min(1),owner:z.string().regex(/^\d+:\d+$/),
     expectedLoadedSaveGuid:z.string().regex(/^[0-9a-fA-F]{32}$/),x:z.number().finite(),z:z.number().finite(),dryRun:z.boolean().default(true)},
@@ -152,7 +152,7 @@ server.registerTool("cs2_facilities", {
   title: "设施容量与建筑等级", description: "学校学生/容量、医疗床位/病人、垃圾存储/处理、实际效率、按分区统计建筑等级。", inputSchema: {},
 }, async () => { try { return jsonResult(await bridgeJson("/city/facilities")); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_building_details", {
-  title: "建筑经营与服务详情", description: "实际等级、效率、员工、车辆、辖区、扩建及企业经营；0.10.5起读母体Attachment经营Hub及采掘企业原生面板产量/单位类别，0.10.5起读企业原生配方投入产出系数及岗位拟合参数。系数不是本期流量；水电/储能/端口/车队和实际运营分别验，零流量不等于冗余，数量不自行换算成吨。",
+  title: "建筑经营与服务详情", description: "实际等级、效率、员工、车辆、辖区、扩建及企业经营；0.10.6起读母体Attachment经营Hub及采掘企业原生面板产量/单位类别，0.10.6起读企业原生配方投入产出系数及岗位拟合参数。系数不是本期流量；水电/储能/端口/车队和实际运营分别验，零流量不等于冗余，数量不自行换算成吨。",
   inputSchema: { index: z.number().int(), version: z.number().int() },
 }, async (args) => { try { return jsonResult(await bridgeJson(`/city/building/details?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`)); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_upgrade_building", {
@@ -248,15 +248,21 @@ server.registerTool("cs2_set_save_settings", {
   inputSchema: { enabled:z.boolean().optional(), intervalSeconds:z.union([z.literal(60),z.literal(120),z.literal(300),z.literal(600),z.literal(1800),z.literal(3600)]).optional(), retentionCount:z.union([z.literal(1),z.literal(2),z.literal(3),z.literal(10)]).optional() },
 }, async (args) => { const params = new URLSearchParams(); for (const [key,value] of Object.entries(args)) if (value !== undefined) params.set(key,String(value)); try { return jsonResult(await bridgeJson(`/settings/saves/set?${params}`,12_000,undefined,{method:"POST"})); } catch(err) { return errorResult(err); } });
 server.registerTool("cs2_graphics_settings", {
-  title: "游戏帧率与后台渲染设置", description: "读取原生垂直同步、基础限帧，以及后台五类降渲染请求/原画质/实际组件与未知值。0.10.5起真正后台临时关闭云、阴影、SSAO、SSGI和SSR；功耗和显卡驱动插帧后帧率未测。", inputSchema: {},
+  title: "游戏帧率与后台渲染设置", description: "读取原生垂直同步、基础限帧，以及后台五类降渲染请求/原画质/实际组件与未知值。0.10.5起真正后台临时关闭云、阴影、SSAO、SSGI和SSR；0.10.6分开报告自有离屏目标、正常场景帧、实际回调及驱动提交。功耗和显卡驱动插帧后帧率未测。", inputSchema: {},
 }, async () => { try { return jsonResult(await bridgeJson("/settings/graphics")); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_resource_diagnostics", {
   title: "读取原生后台资源计数", description: "只读进程提交/物理内存、Unity原生与Mono分配、临时实体、焦点和两次读取间基础帧率；不启用Profiler、不强制GC或卸载资源。", inputSchema: {}, annotations: {readOnlyHint:true},
 }, async () => { try { return jsonResult(await bridgeJson("/diagnostics/resources")); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_set_graphics_settings", {
-  title: "设置游戏限帧与前后台模式", description: "明确后台模式使用30帧及临时原生降渲染（需0.10.5），前台90帧恢复当前玩家画质；不按焦点自动切换。suspendSceneRendering需0.10.5，仅后台可true；false在保持隐藏30帧和五类效果关闭时恢复场景绘制。只管理自有公开相机委托，实际调用、内存和功耗另验。玩家画质文件/分辨率/纹理/驱动保持原样；模拟速度独立。",
-  inputSchema: { maxFps: z.number().int().min(10).max(240).optional(), vSync: z.boolean().optional(), launchMode: z.enum(["background","foreground"]).optional(), suspendSceneRendering: z.boolean().optional() },
-}, async ({ maxFps, vSync, launchMode, suspendSceneRendering }) => {
+  title: "设置游戏限帧与前后台模式", description: "明确后台模式使用30帧及临时原生降渲染（需0.10.5），前台90帧恢复玩家画质；不按焦点自动切换。suspendSceneRendering需0.10.5，true仅后台；0.10.6增加默认关闭的offscreenSceneOutput、renderBackgroundScene、submitBackgroundCommands。显式后台原相机帧在加载/菜单/保存屏障及取景时让出，错误停止；false恢复自有输出。原生保存清force标志不当纹理丢失。调用/回调不代表GPU完成或内存收益，不读回图片或强制GC。玩家配置/分辨率/纹理/驱动保持原样，模拟速度独立。",
+  inputSchema: { maxFps: z.number().int().min(10).max(240).optional(), vSync: z.boolean().optional(), launchMode: z.enum(["background","foreground"]).optional(), suspendSceneRendering: z.boolean().optional(), offscreenSceneOutput: z.boolean().optional(), submitBackgroundCommands: z.boolean().optional(), renderBackgroundScene: z.boolean().optional() },
+}, async ({ maxFps, vSync, launchMode, suspendSceneRendering, offscreenSceneOutput, submitBackgroundCommands, renderBackgroundScene }) => {
+  if (renderBackgroundScene === true && (launchMode === "foreground" || offscreenSceneOutput === false))
+    return errorResult(new Error("后台场景帧不能与前台模式或显式恢复原输出同时启用，未发送设置。"));
+  if (submitBackgroundCommands === true && launchMode === "foreground")
+    return errorResult(new Error("原生驱动命令提交仅用于明确后台模式，未发送设置。"));
+  if (offscreenSceneOutput === true && launchMode === "foreground")
+    return errorResult(new Error("原生离屏输出仅用于后台模式，未发送设置。"));
   if (suspendSceneRendering === true && launchMode === "foreground")
     return errorResult(new Error("前台模式不能暂停场景绘制，未发送设置。"));
   if (vSync === true && (maxFps !== undefined || launchMode !== undefined))
@@ -265,13 +271,16 @@ server.registerTool("cs2_set_graphics_settings", {
   if (maxFps !== undefined) params.set("maxFps", String(maxFps));
   if (vSync !== undefined) params.set("vSync", String(vSync));
   if (suspendSceneRendering !== undefined) params.set("suspendSceneRendering", String(suspendSceneRendering));
+  if (offscreenSceneOutput !== undefined) params.set("offscreenSceneOutput", String(offscreenSceneOutput));
+  if (submitBackgroundCommands !== undefined) params.set("submitBackgroundCommands", String(submitBackgroundCommands));
+  if (renderBackgroundScene !== undefined) params.set("renderBackgroundScene", String(renderBackgroundScene));
   if (launchMode !== undefined) {
     if (maxFps !== undefined && maxFps !== (launchMode === "background" ? 30 : 90))
       return errorResult(new Error("maxFps与明确启动模式预设冲突，未发送设置。"));
     params.set("launchMode", launchMode);
   }
   try {
-    await requirePrecisionBridge("图形参数校验与明确前后台渲染模式", suspendSceneRendering !== undefined ? 10005 : launchMode !== undefined ? 10003 : 10002);
+    await requirePrecisionBridge("图形参数校验与明确前后台渲染模式", renderBackgroundScene !== undefined || submitBackgroundCommands !== undefined || offscreenSceneOutput !== undefined ? 10006 : suspendSceneRendering !== undefined ? 10005 : launchMode !== undefined ? 10003 : 10002);
     return jsonResult(await bridgeJson(`/settings/graphics/set?${params}`));
   } catch (err) { return errorResult(err); }
 });
@@ -386,7 +395,7 @@ server.registerTool(
       "checking what the player is looking at, or verifying the result of an action. " +
       "Default currentFrame returns an existing game frame. source=gameCamera starts one native game-camera " +
       "capture for a hidden window and returns a captureId; query that ID to retrieve status or PNG without rendering again. " +
-      "No desktop or game UI; gameCamera needs bridge 0.10.5. Width is only for a new capture.",
+      "No desktop or game UI; gameCamera needs bridge 0.10.6. Width is only for a new capture.",
     annotations: { readOnlyHint: true },
     inputSchema: {
       source: z.enum(["currentFrame", "gameCamera"]).optional(),
@@ -1039,14 +1048,14 @@ server.registerTool(
     annotations: { readOnlyHint: true },
     description:
       "Detail view of one entity (building/road) by index+version: prefab, position, status flags " +
-      "(abandoned/condemned/destroyed), renters, native utility flow/capacity/attached ports and road composition, 0.10.5原生入口SpawnLocation、AccessLane/RouteLane/Takeoff步行弧及资格限制、母体入口表和条件LaneConnection只读, " +
-      "plus read-only Traffic mod components/buffers. Lane details are opt-in and paginated; default only returns lane counts. 0.10.5起nativeConnections.utilityPorts只读当前实体自有公用标记节点，固定扩建单独查询，端口坐标不代替正常接线与实流。0.10.5起employeeLimit/employeeOffset有界只读雇主原生员工、市民住处/工作/当前楼及出行状态；不以员工数或瞬时到岗证明具体通勤路径。Zero instantaneous flow is not proof of redundancy.",
+      "(abandoned/condemned/destroyed), renters, native utility flow/capacity/attached ports and road composition, 0.10.6原生入口SpawnLocation、AccessLane/RouteLane/Takeoff步行弧及资格限制、母体入口表和条件LaneConnection只读, " +
+      "plus read-only Traffic mod components/buffers. Lane details are opt-in and paginated; default only returns lane counts. 0.10.6起nativeConnections.utilityPorts只读当前实体自有公用标记节点，固定扩建单独查询，端口坐标不代替正常接线与实流。0.10.6起employeeLimit/employeeOffset有界只读雇主原生员工、市民住处/工作/当前楼及出行状态；不以员工数或瞬时到岗证明具体通勤路径。Zero instantaneous flow is not proof of redundancy.",
     inputSchema: {
       index: z.number().int().describe("Entity index"),
       version: z.number().int().describe("Entity version"),
       laneLimit: z.number().int().min(0).max(256).optional().describe("Lane details page size; default 0 (summary only)"),
       laneOffset: z.number().int().min(0).max(65535).optional().describe("Lane details offset; default 0"),
-      employeeLimit: z.number().int().min(0).max(64).optional().describe("Optional native employee roster page size; 0 returns metadata only; requires bridge 0.10.5"),
+      employeeLimit: z.number().int().min(0).max(64).optional().describe("Optional native employee roster page size; 0 returns metadata only; requires bridge 0.10.6"),
       employeeOffset: z.number().int().min(0).max(65535).optional().describe("Employee roster offset; a positive offset requires positive employeeLimit"),
     },
   },
@@ -1192,7 +1201,7 @@ server.registerTool(
   {
     title: "Save the game",
     description:
-      "与原生自动/手动保存共用队列，轮到后读取保存信息并等待本请求原生管线结束；后台隐藏时includePreview=false省略缩略图，不额外渲染或恢复前台。调用后仍须核文件落盘、内层GUID和备份。 " +
+      "与原生自动/手动保存共用队列，轮到后读取保存信息并等待本请求原生管线结束；后台隐藏时includePreview=false省略缩略图，不额外渲染或恢复前台。调用后仍须核文件落盘、内层GUID和完整性；仅有具体恢复缺口时另建临时副本。 " +
       "Default name is timestamped 'CS2MCP ...'.",
     inputSchema: {
       name: z.string().optional().describe("Save name (default: timestamped)"),
@@ -1682,7 +1691,7 @@ server.registerTool(
 
 server.registerTool("cs2_waterway_graph", {
   title: "读取全图完整水路曲线",
-  description: "单帧只读全部真实Waterway边，包括港口内网；不按名称或中点过滤。返回Prefab、Owner、完整三次曲线、节点index/version及实际合成宽高。complete/truncated/missing明示范围，不能从局部0匹配推全图无航道，也不等于船型净空或运营验收。需要桥接0.10.5。",
+  description: "单帧只读全部真实Waterway边，包括港口内网；不按名称或中点过滤。返回Prefab、Owner、完整三次曲线、节点index/version及实际合成宽高。complete/truncated/missing明示范围，不能从局部0匹配推全图无航道，也不等于船型净空或运营验收。需要桥接0.10.6。",
   annotations: {readOnlyHint:true,destructiveHint:false,openWorldHint:false},
   inputSchema: {limit:z.number().int().min(1).max(3000).optional(),expectedLoadedSaveGuid:z.string().regex(/^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/).optional()},
 }, async args => {
@@ -1793,14 +1802,14 @@ server.registerTool(
       "offset and cost of a building prefab, or the width and layers of a network prefab. Use before placing " +
       "large buildings such as harbors, stations and cargo terminals. Includes native utility capacity/voltage/water data " +
       "and prefab assembly; actual generated road utilities must also be checked through inspect. " +
-      "0.10.5起支持路边公交/电车站对象的真实几何、放置标志、道路要求和线路连接类型；" +
+      "0.10.6起支持路边公交/电车站对象的真实几何、放置标志、道路要求和线路连接类型；" +
       "inspect同时返回当前道路Composition高度范围和有界可摆放区域，元数据不代替原生施工校验。" +
-      "0.10.5起只读母体自有采掘区域声明、各自半径/水域/重叠/资源规则、本地节点与一层占位候选；" +
+      "0.10.6起只读母体自有采掘区域声明、各自半径/水域/重叠/资源规则、本地节点与一层占位候选；" +
       "有界及缺失状态明示，不代表已选资产、现场入口、原生放置通过或企业投产。",
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     inputSchema: {
       name: z.string().describe("Exact prefab name (cs2_find_prefabs or actual upgrade declarations)"),
-      kind: z.literal("workRoute").optional().describe("明确产业作业线类型；只读且需0.10.5，普通建筑/道路查询省略"),
+      kind: z.literal("workRoute").optional().describe("明确产业作业线类型；只读且需0.10.6，普通建筑/道路查询省略"),
     },
   },
   async ({ name, kind }) => {
@@ -1915,7 +1924,7 @@ server.registerTool(
       "the segments, lanes and zone blocks and validates the result (a wider road can remove buildings it " +
       "overlaps). invert=true flips the drawing direction, which sets the direction of one-way roads. The game " +
       "updates segments in place, so they normally keep their ids; the replaced segments are returned by position. " +
-      "dryRun=true runs the full native replacement preview, returns costs/geometry/affected originals and clears it without applying or charging; requires bridge 0.10.5.",
+      "dryRun=true runs the full native replacement preview, returns costs/geometry/affected originals and clears it without applying or charging; requires bridge 0.10.6.",
     inputSchema: {
       roads: z
         .array(z.object({ index: z.number().int(), version: z.number().int() }))
@@ -2113,14 +2122,14 @@ server.registerTool(
 
 server.registerTool("cs2_processing_summary", {
   title: "全城制造配方与真实岗位汇总",
-  description: "一次有界只读ECS扫描，排除采掘、仓储、商业及办公，按原生配方、产权地区和等级汇总制造公司/员工项/工位/原生Workforce与字段覆盖。缺项不补0；配方与岗位不是当前产量，每公司/完整配方实际率和活跃数不受支持。需桥接0.10.5。",
+  description: "一次有界只读ECS扫描，排除采掘、仓储、商业及办公，按原生配方、产权地区和等级汇总制造公司/员工项/工位/原生Workforce与字段覆盖。缺项不补0；配方与岗位不是当前产量，每公司/完整配方实际率和活跃数不受支持。需桥接0.10.6。",
   inputSchema: {}, annotations: {readOnlyHint:true},
 }, async ()=>{try {await requirePrecisionBridge(9084,"制造配方与真实岗位只读汇总");return jsonResult(await bridgeJson("/city/processing-summary"));}catch(e){return errorResult(e);}});
 
 
 server.registerTool("cs2_extractor_calibration", {
   title: "十原料采掘原生参数与经营单元校准",
-  description: "一次有界只读扫描当前注册采掘CompanyPrefab、十原料实际公司、Hub、母体升级与自有区域、岗位、原生Workforce、完整效率、历史产量缓存、库存和面积。未知不补0，预算超限整批拒绝。库存/区域/条件理论量不等于实际产量，缓存不等于当前活跃；累计及连接生产资格不受支持。需桥接0.10.5。",
+  description: "一次有界只读扫描当前注册采掘CompanyPrefab、十原料实际公司、Hub、母体升级与自有区域、岗位、原生Workforce、完整效率、历史产量缓存、库存和面积。未知不补0，预算超限整批拒绝。库存/区域/条件理论量不等于实际产量，缓存不等于当前活跃；累计及连接生产资格不受支持。需桥接0.10.6。",
   inputSchema: { expectedLoadedSaveGuid: extractorCalibrationGuid.optional() },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, async args => {
@@ -2135,7 +2144,7 @@ server.registerTool("cs2_extractor_calibration", {
 
 server.registerTool("cs2_industry_work_routes", {
   title: "产业母体作业线与真实归属只读检查",
-  description: "按当前加载GUID和完整母体实体读取原生作业线/其他升级声明、真实Owner链、端点/车道、完整分段路径与车辆引用。严格只读、固定预算，未知不补零，超限整批拒绝。原生Complete标志/车辆引用不证明生产或成功运输；创建接口尚未提供。未知声明计数为null，需桥接0.10.5。",
+  description: "按当前加载GUID和完整母体实体读取原生作业线/其他升级声明、真实Owner链、端点/车道、完整分段路径与车辆引用。严格只读、固定预算，未知不补零，超限整批拒绝。原生Complete标志/车辆引用不证明生产或成功运输；创建接口尚未提供。未知声明计数为null，需桥接0.10.6。",
   inputSchema: z.object({
     index: z.number().int().positive(),
     version: z.number().int().positive(),
@@ -2151,4 +2160,4 @@ server.registerTool("cs2_industry_work_routes", {
 });
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error(`cs2-mcp 0.10.5 running on stdio (bridge: ${BRIDGE_URL})`);
+console.error(`cs2-mcp 0.10.6 running on stdio (bridge: ${BRIDGE_URL})`);

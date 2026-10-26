@@ -9,6 +9,9 @@
     <Compile Include="../../CS2MCP.Bridge/BridgeRequest.cs" Link="BridgeRequest.cs" />
     <Compile Include="../../CS2MCP.Bridge/HttpBridgeServer.cs" Link="HttpBridgeServer.cs" />
     <Compile Include="../../CS2MCP.Bridge/RuntimeMemory.cs" Link="RuntimeMemory.cs" />
+    <Compile Include="../../CS2MCP.Bridge/MemoryOperationBudget.cs" Link="MemoryOperationBudget.cs" />
+    <Compile Include="../../CS2MCP.Bridge/RequestMemoryAdmission.cs" Link="RequestMemoryAdmission.cs" />
+    <Compile Include="../../mcp-server/test/fixtures/memory-pressure-probe.cs" Link="MemoryPressureProbe.cs" />
     <Compile Include="../../CS2MCP.Bridge/SignalUiLimits.cs" Link="SignalUiLimits.cs" />
     <Compile Include="../../CS2MCP.Bridge/LaunchFramePolicy.cs" Link="LaunchFramePolicy.cs" />
   </ItemGroup>

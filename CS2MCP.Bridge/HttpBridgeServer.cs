@@ -146,19 +146,8 @@ namespace CS2MCP
                     return m_ReadNativeCapture != null ? m_ReadNativeCapture(request)
                         : BridgeResponse.Error(409, "当前桥接没有可查询的原生取景结果");
 
-                if (request.Path.StartsWith("/build/", StringComparison.Ordinal) || request.Path == "/transit/stops/relocate") {
-                    var memory = RuntimeMemory.Read();
-                    if (!memory.constructionAllowed)
-                        return BridgeResponse.Json(new {
-                            code = "resource_budget", failurePhase = "prequeue", enqueued = false,
-                            handlerStarted = false, mayHaveApplied = false, safeToRetry = false,
-                            reason = memory.unavailableReason != null ? "counter_unavailable" : memory.constructionFailureReason,
-                            error = memory.unavailableReason != null
-                                ? "内存计数器无法核验；施工/预览尚未排队。先核计数器，不自动重试或重启；保存和正常退出仍可用。"
-                                : "内存提交预算不足；施工/预览尚未排队。先核实际资源压力，待余量恢复后读取新现场；不自动重试旧批次或要求重启。",
-                            resourceBudget = memory
-                        }, 409);
-                }
+                var memoryError = RequestMemoryAdmission.Check(request, enqueued: false);
+                if (memoryError != null) return memoryError;
                 m_EnqueueToMainThread(request);
             }
             // 等待不能持有关闭门；StopServer需要完成仍未处理的排队请求。

@@ -49,6 +49,9 @@ namespace CS2MCP
 
         public BridgeResponse Handle(BridgeRequest request)
         {
+            // 入队后容量可能变化；操作开始前复用同一规模策略，不沿用入队时读数。
+            var memoryError = RequestMemoryAdmission.Check(request, enqueued: true);
+            if (memoryError != null) return memoryError;
             if (request.TryGetBool("force", out bool forced) && forced)
                 return BridgeResponse.Error(400, "force is unsupported; use native unlock, placement and validation prerequisites");
             if (request.Query.TryGetValue("prefab", out string selectedAsset)
@@ -521,8 +524,6 @@ namespace CS2MCP
             int width = 1280;
             if (request.Query.ContainsKey("width") && (!request.TryGetInt("width", out width) || width < 64 || width > 3840))
                 return BridgeResponse.Error(400, "width必须为64至3840的整数");
-            if (!RuntimeMemory.Read().constructionAllowed)
-                return BridgeResponse.Error(409, "截图分配余量不足或无法核实；先正常保存退出，不进行额外渲染或自动重试");
             if (source == "gameCamera") {
                 var manager = GameManager.instance;
                 if (manager == null || manager.isGameLoading || manager.gameMode != Game.GameMode.Game)
@@ -530,6 +531,9 @@ namespace CS2MCP
                 try {
                     var camera = World.GetExistingSystemManaged<Game.Rendering.CameraUpdateSystem>()?.activeCamera;
                     if (camera == null) throw new InvalidOperationException("native_game_camera_unavailable");
+                    var captureBudget = MemoryOperationBudget.Capture(width, NativeGameCameraCapture.GetCaptureHeight(camera, width));
+                    var captureMemoryError = RequestMemoryAdmission.Check(RuntimeMemory.Read(), captureBudget, enqueued: true);
+                    if (captureMemoryError != null) return captureMemoryError;
                     int expectedCamera = camera.GetInstanceID();
                     string expectedGuid = World.GetExistingSystemManaged<Game.Serialization.LoadGameSystem>()?.context.instigatorGuid.ToString();
                     if (!NativeCaptureOperation.Shared.TryBegin(expectedGuid, expectedCamera, width, out var operation))
@@ -538,8 +542,8 @@ namespace CS2MCP
                         ScreenshotRunner.Ensure().CaptureNative(operation.captureId, () => {
                             var currentManager = GameManager.instance;
                             if (World == null || !World.IsCreated || currentManager == null || currentManager.isGameLoading
-                                || currentManager.gameMode != Game.GameMode.Game || !RuntimeMemory.Read().constructionAllowed)
-                                throw new InvalidOperationException("native_capture_scene_or_resource_changed");
+                                || currentManager.gameMode != Game.GameMode.Game)
+                                throw new InvalidOperationException("native_capture_scene_changed");
                             string currentGuid = World.GetExistingSystemManaged<Game.Serialization.LoadGameSystem>()?.context.instigatorGuid.ToString();
                             var currentCamera = World.GetExistingSystemManaged<Game.Rendering.CameraUpdateSystem>()?.activeCamera;
                             if (currentGuid != expectedGuid || currentCamera == null || currentCamera.GetInstanceID() != expectedCamera)

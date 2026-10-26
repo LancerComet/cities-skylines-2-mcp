@@ -5,7 +5,7 @@
     <LangVersion>9.0</LangVersion>
     <AssemblyName>CS2MCP</AssemblyName>
     <RootNamespace>CS2MCP</RootNamespace>
-    <Version>0.10.5</Version>
+    <Version>0.10.6</Version>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <!-- Cities: Skylines II install path. Resolution order (first match wins):
          1) -p:GamePath=... on the dotnet build command line
@@ -117,7 +117,7 @@
            Text="Cities: Skylines II not found (looked in '$(GamePath)'). Set the CS2_PATH environment variable to your game install folder, or pass -p:GamePath=&quot;X:\...\Cities Skylines II&quot; to dotnet build." />
   </Target>
 
-  <!-- 构建默认不触碰已安装DLL；完成游戏退出、旧件备份后才显式启用部署。 -->
+  <!-- 构建默认不触碰已安装DLL；完成游戏退出并核适用恢复安排后才显式启用部署。 -->
   <Target Name="DeployToLocalMods" AfterTargets="Build" Condition="'$(DeployToLocalMods)' == 'true' And '$(SkipDeploy)' != 'true'">
     <MakeDir Directories="$(ModDeployPath)" />
     <ItemGroup>
