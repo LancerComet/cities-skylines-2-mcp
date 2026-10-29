@@ -158,7 +158,7 @@ server.registerTool("cs2_upgrade_building", {
   inputSchema: { index:z.number().int(), version:z.number().int(), prefab:z.string(), x:z.number().optional(), z:z.number().optional(), rotation:z.number().optional(), dryRun:z.boolean().optional() },
 }, async (args) => { try { return jsonResult(await bridgeJson(`/build/building/upgrade?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000,undefined,{method:"POST"})); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_rebuild_service_building", {
-  title: "原生损毁服务设施重建", description: "只对原生灾害救援清障已完成的损毁主体或服务附属原位重建。保留正常预览、碰撞与收费；dryRun默认true，实际应用后回读损毁、附属和端口。",
+  title: "原生损毁主体重建", description: "按原生灾后面板资格，对已完成清障的独立主体、已放置标志建筑或服务附属原位重建；普通可生长建筑拒绝，产业Hub使用专门入口。保留正常预览、碰撞与收费；dryRun默认true，实际应用后回读损毁、附属和端口。",
   inputSchema: { index:z.number().int().min(1), version:z.number().int().min(1), dryRun:z.boolean().default(true) },
 }, async args => { try { await requirePrecisionBridge(9064,"正常灾害设施重建"); return jsonResult(await bridgeJson(`/build/building/rebuild?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000)); } catch (err) { return errorResult(err); } });
 server.registerTool("cs2_rebuild_industry_hub", {

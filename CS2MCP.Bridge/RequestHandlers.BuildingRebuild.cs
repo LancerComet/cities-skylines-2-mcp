@@ -6,7 +6,7 @@ namespace CS2MCP
 {
     public sealed partial class RequestHandlers
     {
-        /// <summary>只重建已由原生灾害救援清障完成的服务设施；收费、碰撞及网络恢复交给原生工具。</summary>
+        /// <summary>按原生DestroyedBuildingSection的独立主体资格重建；收费、碰撞及网络恢复交给原生工具。</summary>
         private BridgeResponse RebuildServiceBuilding(BridgeRequest request)
         {
             if (request.Query.ContainsKey("dryRun") && !request.TryGetBool("dryRun", out _))
@@ -17,10 +17,13 @@ namespace CS2MCP
                 || !EntityManager.HasComponent<Game.Objects.Transform>(target)
                 || !EntityManager.HasComponent<PrefabRef>(target)
                 || !EntityManager.HasComponent<Destroyed>(target))
-                return BridgeResponse.Error(400, "target must be a currently destroyed service building; refresh details before retrying");
+                return BridgeResponse.Error(400, "target must be a currently destroyed building; refresh details before retrying");
             Entity prefab = EntityManager.GetComponentData<PrefabRef>(target).m_Prefab;
-            if (!EntityManager.HasComponent<ServiceObjectData>(prefab) && !EntityManager.HasComponent<ServiceUpgradeData>(prefab))
-                return BridgeResponse.Error(400, "only native service buildings and their service upgrades can use this rebuild endpoint");
+            // 原生面板还允许独立遗迹与已放置标志建筑；普通可生长建筑不能借此重建。
+            // Attached产业Hub继续使用带母体/GUID与采掘Lot校验的专门入口。
+            if (EntityManager.HasComponent<SpawnableBuildingData>(prefab)
+                && !EntityManager.HasComponent<PlacedSignatureBuildingData>(prefab))
+                return BridgeResponse.Error(400, "ordinary growable buildings cannot use this endpoint; attached extractor Hubs require the guarded industry rebuild endpoint");
             if (EntityManager.HasComponent<Owner>(target) && !EntityManager.HasComponent<Game.Buildings.ServiceUpgrade>(target))
                 return BridgeResponse.Error(400, "internal owned buildings cannot be rebuilt independently");
             var destroyed = EntityManager.GetComponentData<Destroyed>(target);
