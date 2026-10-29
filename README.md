@@ -4,6 +4,8 @@
 
 The product version is **0.9.1**, aligned with upstream's 0.9 release line. Ordinary fixes use Git commits instead of incrementing the product version per tool. Mod, assembly, SDK package/lock and MCP handshake versions agree. The bridge advertises **controlApiVersion: 1** in /ping independently of the product release. Historical bridges without that field retain their original version checks; an unknown advertised control contract is rejected before submitting an operation. Immutable historical receipts keep their original versions.
 
+`cs2_game_state.clockControl.nativeUi` reads the native game screen, menu state, pending confirmation callbacks and current error dialog. Missing native members are reported as unavailable. This diagnostic does not dismiss dialogs, ignore errors or release simulation pause barriers; an absent callback does not prove that no message dialog is open.
+
 ## Attached industry rebuilding and underground power lines (0.9.1)
 
 `cs2_rebuild_industry_hub` rebuilds an existing cleared, destroyed operating Hub through the native preview/validation/apply pipeline. It requires the current loaded-save GUID, complete Hub and parent identities, matching `Attached`/`Attachment` links, an extractor Lot owned by that parent and normal unlocks. Preview is the default; `dryRun=false` is required for normal paid application. Ownership, companies, fields and resources are not rewritten; production recovery needs a separate operational check. This rebuild capability does not duplicate pending #4's specialized-industry creation or boundary editing.

@@ -43,7 +43,43 @@ namespace CS2MCP
                 nativeGateAvailable = available, nativeHasFocus = available ? (bool?)focus : null,
                 nativePauseBarrier = available ? (bool?)barrier : null,
                 activeNativePanel = World.GetExistingSystemManaged<GamePanelUISystem>()?.activePanel?.GetType().FullName,
+                nativeUi = ReadNativeClockUi(),
                 note = "后台控制仅本次加载有效；保留原生菜单/保存/错误暂停，帧率上限和实际模拟吞吐独立" };
+        }
+
+        // GamePanel不包含暂停菜单或全局错误；只读取原生状态，不能据此清除任何屏障。
+        private object ReadNativeClockUi()
+        {
+            try
+            {
+                var app = Game.SceneFlow.GameManager.instance?.userInterface?.appBindings;
+                var screen = World.GetExistingSystemManaged<GameScreenUISystem>();
+                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                var managerField = app?.GetType().GetField("m_ErrorDialogManager", flags);
+                var errors = managerField?.GetValue(app);
+                var currentProperty = errors?.GetType().GetProperty("currentError", flags);
+                var current = currentProperty?.GetValue(errors) as Game.UI.ErrorDialog;
+                var callbackField = app?.GetType().GetField("m_ConfirmationDialogCallback", flags);
+                var dismissibleField = app?.GetType().GetField("m_DismissibleConfirmationDialogCallback", flags);
+                bool readable = app != null && screen != null && managerField != null && errors != null
+                    && currentProperty != null && callbackField != null && dismissibleField != null;
+                string details = current?.errorDetails;
+                return new { available = readable, gameScreen = screen?.activeScreen.ToString(),
+                    menuActive = screen == null ? (bool?)null : screen.isMenuActive,
+                    confirmationCallbackPending = callbackField == null ? (bool?)null : callbackField.GetValue(app) != null,
+                    dismissibleConfirmationCallbackPending = dismissibleField == null ? (bool?)null : dismissibleField.GetValue(app) != null,
+                    currentError = current == null ? null : (object)new { current.serial, current.count,
+                        severity = current.severity.ToString(), actions = current.actions.ToString(),
+                        title = OptionalModApi.JsonValue(current.localizedTitle), message = OptionalModApi.JsonValue(current.localizedMessage),
+                        details = details == null || details.Length <= 4000 ? details : details.Substring(0, 4000),
+                        detailsTruncated = details != null && details.Length > 4000 },
+                    note = "只读当前原生错误和菜单；回调为空不证明没有消息框，不执行关闭、忽略或恢复" };
+            }
+            catch (System.Exception error)
+            {
+                return new { available = false, errorType = error.GetType().Name,
+                    note = "原生菜单或错误状态读取失败；保留暂停屏障" };
+            }
         }
 
         // 原生“继续”通知动作；只清除已达到的里程碑提示，不能解锁、加点或清除错误/保存屏障。
