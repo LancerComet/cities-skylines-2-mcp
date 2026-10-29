@@ -111,3 +111,9 @@ MCP 保存进入与原生自动保存、菜单保存和加载相同的 `SaveLoad
 桥接回执区分 `before_native_save`、`native_save_pipeline`、`native_save_queued_interrupted` 和 `native_save_interrupted`。尚未开始的元数据/菜单故障有 `mayHaveApplied=false`；已经排队但协程中断仍可能稍后执行，不能重发。SDK 对一般 HTTP 500 继续保守视为未知应用，不将队列或异常回执当作重试许可。纹理仍保留至本请求原生借用结束，再由 Unity 主线程释放。后台无预览保存不新增渲染。
 
 管线结束不证明存档文件完整，原生覆盖失败可能损坏原文件。关键保存先保护旧文件，随后核文件新鲜度、全部 ZIP entry 的 CRC、内层身份及独立备份；成功回执也不代替这些验收。此修复不证明任何特定 IOException 或长期内存增长的原因，也不修改原生游戏保存实现。
+
+### 0.10.7：经营Hub重建与地下输电
+
+新增 `cs2_rebuild_industry_hub`：仅对已清障的损毁经营Hub进行正常原位重建，必填当前Loaded GUID、Hub和母体完整身份；核双向Attached/Attachment、自有采掘Lot和正常解锁。默认原生预览，只有显式 `dryRun=false` 才正常收费应用；不改所有权、公司、作业区或资源，恢复经营须另验。此能力与待审#4的专门产业创建、边界编辑分工不同。
+
+`cs2_connect_road` 对地下输电连接选择真实原生地下变体并保留实际吸附端口深度。自由端仍须符合地下深度范围，地面过渡须接既有兼容节点；几何解析不等于建成、连通或实际输电。

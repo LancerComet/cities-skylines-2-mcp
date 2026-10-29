@@ -130,6 +130,40 @@ namespace CS2MCP
                 : end.Position.y - SampleNetworkSurface(waterway, ref waterData, ref heightData, end.Position);
             if (!CheckNetElevation(prefabEntity, resolvedStartElevation, out error)
                 || !CheckNetElevation(prefabEntity, resolvedEndElevation, out error)) return error;
+            string requestedPrefab = prefab.name;
+            bool undergroundVariantSelected = false;
+            if (prefab is PowerLinePrefab && EntityManager.HasComponent<PlaceableNetData>(prefabEntity))
+            {
+                var surface = EntityManager.GetComponentData<PlaceableNetData>(prefabEntity);
+                bool hasUnderground = surface.m_UndergroundPrefab != Entity.Null;
+                if (NativePowerLineVariantRules.SelectUnderground(true, hasUnderground,
+                    surface.m_ElevationRange.min, resolvedStartElevation, resolvedEndElevation))
+                {
+                    Entity underground = surface.m_UndergroundPrefab;
+                    if (IsLocked(underground) || !EntityManager.HasComponent<PlaceableNetData>(underground)
+                        || !EntityManager.HasComponent<NetData>(underground))
+                        return BridgeResponse.Error(409, "native power-line underground variant unavailable or locked");
+                    var range = EntityManager.GetComponentData<PlaceableNetData>(underground).m_ElevationRange;
+                    // A fixed surface node is the real native transition, not a
+                    // new free surface cable. Its height was checked against the
+                    // requested surface/underground family above; do not move it.
+                    if (!NativePowerLineVariantRules.FreeEndFits(start.Entity != Entity.Null,
+                            resolvedStartElevation, range.min, range.max)
+                        || !NativePowerLineVariantRules.FreeEndFits(end.Entity != Entity.Null,
+                            resolvedEndElevation, range.min, range.max))
+                        return BridgeResponse.Error(400, "free power-cable endpoints must fit the native underground range; a surface transition requires an existing compatible node");
+                    prefabEntity = underground;
+                    prefab = World.GetOrCreateSystemManaged<PrefabSystem>().GetPrefab<PrefabBase>(underground);
+                    undergroundVariantSelected = true;
+                }
+                // Course elevation and terrain fitting must use actual snapped
+                // depths too; a default zero would reclassify a buried port.
+                start.Elevation = resolvedStartElevation;
+                end.Elevation = resolvedEndElevation;
+                foreach (string key in new[] { "c1e", "c2e" })
+                    if (request.TryGetFloat(key, out float controlElevation)
+                        && !CheckNetElevation(prefabEntity, controlElevation, out error)) return error;
+            }
             if (start.Entity != Entity.Null && start.Entity == end.Entity)
             {
                 return BridgeResponse.Error(400, "both ends snap to the same junction or segment; move an end or lower snap");
@@ -188,7 +222,8 @@ namespace CS2MCP
             float curveLength = MathUtils.Length(bezier);
             if (!math.isfinite(curveLength) || curveLength > 2000) return BridgeResponse.Error(400, "curve length must be finite and <=2000m; split longer curves into connected segments");
             if (request.TryGetBool("dryRun", out bool dryRun) && dryRun)
-                return BridgeResponse.Json(new { dryRun = true, prefab = prefab.name, geometry = cubic ? "cubic" : quadratic ? "quadratic" : "straight",
+                return BridgeResponse.Json(new { dryRun = true, prefab = prefab.name, requestedPrefab, undergroundVariantSelected,
+                    geometry = cubic ? "cubic" : quadratic ? "quadratic" : "straight",
                     lengthMeters = curveLength, start = RoadEndInfo(start), end = RoadEndInfo(end),
                     controls = new[] { RoadPointInfo(bezier.b), RoadPointInfo(bezier.c) },
                     composition, constantSlope,

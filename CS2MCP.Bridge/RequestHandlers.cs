@@ -128,6 +128,8 @@ namespace CS2MCP
                     return RelocateBuildingUpgrade(request);
                 case "/build/building/rebuild":
                     return RebuildServiceBuilding(request);
+                case "/build/industry/rebuild":
+                    return RebuildIndustryHub(request);
                 case "/city/housing-snapshot":
                     return GetHousingSnapshot(request);
                 case "/city/happiness":

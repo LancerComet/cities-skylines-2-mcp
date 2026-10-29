@@ -6,6 +6,8 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <Compile Include="../../CS2MCP.Bridge/NativePowerLineVariantRules.cs" Link="NativePowerLineVariantRules.cs" />
+    <Compile Include="../../mcp-server/test/fixtures/power-line-variant-probe.cs" Link="PowerLineVariantProbe.cs" />
     <Compile Include="../../CS2MCP.Bridge/BridgeRequest.cs" Link="BridgeRequest.cs" />
     <Compile Include="../../CS2MCP.Bridge/HttpBridgeServer.cs" Link="HttpBridgeServer.cs" />
     <Compile Include="../../CS2MCP.Bridge/RuntimeMemory.cs" Link="RuntimeMemory.cs" />

@@ -33,6 +33,12 @@ var memoryChecks = JObject.Parse(MemoryPressureProbe.Run());
 Check(memoryChecks["productionSourcesLinked"].Value<bool>(), "memory diagnostic detached from production sources");
 Check(memoryChecks["passed"].Value<int>() >= 20, "memory admission coverage unexpectedly reduced");
 checks += memoryChecks["passed"].Value<int>();
+// Native cable selection and fixed-node transitions share these production rules
+// with the Windows probe; exercise them on every CI platform as well.
+var powerLineChecks = JObject.Parse(PowerLineVariantProbe.Run());
+Check(powerLineChecks["productionSourcesLinked"].Value<bool>(), "power-line diagnostic detached from production sources");
+Check(powerLineChecks["passed"].Value<int>() == 14, "power-line transition coverage unexpectedly reduced");
+checks += powerLineChecks["passed"].Value<int>();
 Check(LaunchFramePolicy.Resolve("background") == 30, "background mode incorrect");
 Check(LaunchFramePolicy.Resolve("foreground") == 90, "foreground mode incorrect");
 foreach (string mode in new[] { null, "", "BACKGROUND", "unknown" })

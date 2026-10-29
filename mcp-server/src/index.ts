@@ -45,7 +45,7 @@ function validateRoadPath(segments:z.infer<typeof roadPathSegment>[]) {
   }
 }
 
-const server = new McpServer({ name: "cs2-mcp", version: "0.10.6" });
+const server = new McpServer({ name: "cs2-mcp", version: "0.10.7" });
 
 server.registerTool("cs2_facility_parking_fees", {
   title: "读取全部公共设施停车费",
@@ -163,6 +163,15 @@ server.registerTool("cs2_rebuild_service_building", {
   title: "原生损毁服务设施重建", description: "只对原生灾害救援清障已完成的损毁主体或服务附属原位重建。保留正常预览、碰撞与收费；dryRun默认true，实际应用后回读损毁、附属和端口。",
   inputSchema: { index:z.number().int().min(1), version:z.number().int().min(1), dryRun:z.boolean().default(true) },
 }, async args => { try { await requirePrecisionBridge(9064,"正常灾害设施重建"); return jsonResult(await bridgeJson(`/build/building/rebuild?${new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)]))}`,60000)); } catch (err) { return errorResult(err); } });
+server.registerTool("cs2_rebuild_industry_hub", {
+  title: "专门产业经营Hub正常原位重建",
+  description: "仅已清障损毁、原生允许重建的Attached经营Hub；指定当前Loaded GUID及完整产业母体，核Attachment双向关系和自有采掘Lot。默认完整原生预览，dryRun=false才正常收费应用；保母体/区域，不手改Owner或公司，恢复经营与产量另验。需要桥接0.10.7。",
+  inputSchema: { index:z.number().int().positive(), version:z.number().int().positive(), parent:z.object({index:z.number().int().positive(),version:z.number().int().positive()}).strict(), expectedLoadedSaveGuid:z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i), dryRun:z.boolean().default(true) },
+}, async args => { try {
+  await requirePrecisionBridge(10007,"专门产业经营Hub正常重建");
+  const {parent,...rest}=args;
+  return jsonResult(await bridgeJson(`/build/industry/rebuild?${new URLSearchParams(Object.entries({...rest,parentIndex:parent.index,parentVersion:parent.version}).map(([k,v])=>[k,String(v)]))}`,60000));
+} catch(err) { return errorResult(err); } });
 // 插入既有index.ts作用域。9086是085之后建议首次住房能力版本；Root集中发布时与实际版本统一。
 const housingSnapshotBridgeMinimum = 9086;
 const housingSnapshotExpectedGuid = z.string().regex(
@@ -2160,4 +2169,4 @@ server.registerTool("cs2_industry_work_routes", {
 });
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error(`cs2-mcp 0.10.6 running on stdio (bridge: ${BRIDGE_URL})`);
+console.error(`cs2-mcp 0.10.7 running on stdio (bridge: ${BRIDGE_URL})`);
