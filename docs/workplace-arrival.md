@@ -1,6 +1,6 @@
 # 原生员工与到达证据
 
-桥接0.10.5起，`cs2_inspect(index, version, employeeLimit, employeeOffset)`可选读取该雇主的原生`Game.Companies.Employee`缓冲。默认不展开员工，原有调用保持原状；新参数在旧桥接上明确拒绝，不静默省略。
+桥接0.9.1起，`cs2_inspect(index, version, employeeLimit, employeeOffset)`可选读取该雇主的原生`Game.Companies.Employee`缓冲。默认不展开员工，原有调用保持原状；新参数在旧桥接上明确拒绝，不静默省略。
 
 - `employeeLimit`：整数0—64；0只读元数据。
 - `employeeOffset`：整数0—65535；大于0时必须同时提供大于0的`employeeLimit`。

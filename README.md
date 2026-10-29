@@ -1,22 +1,26 @@
 # CS2MCP — An MCP Server for Cities: Skylines II
 
-## Attached industry rebuilding and underground power lines (0.10.7)
+## Product version and control API
+
+The product version is **0.9.1**, aligned with upstream's 0.9 release line. Ordinary fixes use Git commits instead of incrementing the product version per tool. Mod, assembly, SDK package/lock and MCP handshake versions agree. The bridge advertises **controlApiVersion: 1** in /ping independently of the product release. Historical bridges without that field retain their original version checks; an unknown advertised control contract is rejected before submitting an operation. Immutable historical receipts keep their original versions.
+
+## Attached industry rebuilding and underground power lines (0.9.1)
 
 `cs2_rebuild_industry_hub` rebuilds an existing cleared, destroyed operating Hub through the native preview/validation/apply pipeline. It requires the current loaded-save GUID, complete Hub and parent identities, matching `Attached`/`Attachment` links, an extractor Lot owned by that parent and normal unlocks. Preview is the default; `dryRun=false` is required for normal paid application. Ownership, companies, fields and resources are not rewritten; production recovery needs a separate operational check. This rebuild capability does not duplicate pending #4's specialized-industry creation or boundary editing.
 
 `cs2_connect_road` now chooses the surface power line's real native underground variant for a buried connection and keeps actual snapped port depths. Free cable endpoints must fit the native underground range; a surface transition requires an existing compatible node. Geometric resolution does not prove construction, connectivity or electricity flow.
 
-## Memory admission and explicit hidden rendering (0.10.6)
+## Memory admission and explicit hidden rendering (0.9.1)
 
 The bridge now distinguishes system/process commit availability, virtual address space and physical residency. Physical pressure and process-share percentages are warnings, rather than blanket construction, capture or save rejection. New allocations are assessed against a bounded operation-specific estimate; reads, saves and cancellation remain available. No warning automatically restarts the game or changes OS memory settings.
 
-The optional `offscreenSceneOutput`, `renderBackgroundScene` and `submitBackgroundCommands` settings require bridge 0.10.6 and default to false. Explicit hidden scene frames reuse the enabled game camera and one owned render target at frame end. Loading, native menu/save barriers, captures and already-rendered frames yield; failures stop without automatic retry. Disabling output, leaving the scene or disposal releases only owned resources. Native preview capture restores the target but clears `forceIntoRenderTexture`; that transient flag no longer invalidates texture ownership. Attempted/returned calls and native camera callbacks are separate from GPU completion and measured memory benefit. No periodic screenshot, pixel readback or forced collection maintains the loop.
+The optional `offscreenSceneOutput`, `renderBackgroundScene` and `submitBackgroundCommands` settings require bridge 0.9.1 and default to false. Explicit hidden scene frames reuse the enabled game camera and one owned render target at frame end. Loading, native menu/save barriers, captures and already-rendered frames yield; failures stop without automatic retry. Disabling output, leaving the scene or disposal releases only owned resources. Native preview capture restores the target but clears `forceIntoRenderTexture`; that transient flag no longer invalidates texture ownership. Attempted/returned calls and native camera callbacks are separate from GPU completion and measured memory benefit. No periodic screenshot, pixel readback or forced collection maintains the loop.
 
 Public explicit presets remain 30/90 FPS and unmarked starts preserve player settings. Rendering, simulation speed and throughput are independent. Save completion still requires file-freshness, inner GUID and CRC/hash checks; an extra copy is only needed for a concrete recovery gap, with a defined cleanup condition.
 
 **English** | [简体中文](README.CHS.md)
 
-Version 0.10.7 builds on upstream 72bd7e0 (merged HTTP hardening #3), projects verified native lifecycle, UI-readiness, layout and inspection improvements, and retains the exclusions of pending #4. See [scope](docs/contribution-scope.md) and [HTTP contract](docs/http-bridge-security.md).
+Version 0.9.1 builds on upstream 72bd7e0 (merged HTTP hardening #3), projects verified native lifecycle, UI-readiness, layout and inspection improvements, and retains the exclusions of pending #4. See [scope](docs/contribution-scope.md) and [HTTP contract](docs/http-bridge-security.md).
 
 Give Claude (or any MCP client) **full control** over a running Cities: Skylines II game: read city data, drive the camera and take screenshots, build roads and buildings, paint zones, manage finances and policies, and control simulation time.
 

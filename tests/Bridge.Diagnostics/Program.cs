@@ -89,6 +89,10 @@ try
         using var reader = new StreamReader(stream, Encoding.UTF8);
         return reader.ReadToEnd();
     }
+    string pingReply = Send($"GET /ping HTTP/1.1\r\nHost: localhost:{port}\r\n\r\n");
+    var pingPayload = JObject.Parse(pingReply.Substring(pingReply.IndexOf("\r\n\r\n") + 4));
+    Check(pingPayload["controlApiVersion"].Type == JTokenType.Integer && pingPayload["controlApiVersion"].Value<int>() == 1,
+        "native-control contract identity missing from real ping");
     string reply = Send($"GET /echo?q=A+B%2BC HTTP/1.1\r\nHost: localhost:{port}\r\n\r\n");
     var payload = JObject.Parse(reply.Substring(reply.IndexOf("\r\n\r\n") + 4));
     Check(payload["Query"]["q"].Value<string>() == "A B+C", "space/plus query decoding failed");

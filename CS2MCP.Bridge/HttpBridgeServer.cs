@@ -245,6 +245,7 @@ namespace CS2MCP
                 ok = true,
                 mod = Mod.Name,
                 version = Mod.Version,
+                controlApiVersion = 1,
                 gameMode,
                 isLoading,
                 memory = RuntimeMemory.Read(),
