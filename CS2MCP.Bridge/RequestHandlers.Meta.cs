@@ -127,8 +127,11 @@ namespace CS2MCP
             float speed = request.TryGetFloat("speed", out float rawSpeed) ? math.clamp(rawSpeed, 0.5f, 8f) : 4f;
 
             uint targetFrame = sim.frameIndex + (uint)(hours * kFramesPerHour);
-            m_System.SetAutoPause(targetFrame);
+            bool dismissPopups = request.TryGetBool("dismissPopups", out bool rawDismiss) && rawDismiss;
+            m_System.SetAutoPause(targetFrame, dismissPopups);
+            int dismissedNow = dismissPopups ? DismissBlockingPopups() : 0;
             sim.selectedSpeed = speed;
+            string forcedPause = ForcedPauseReason();
 
             return BridgeResponse.Json(new
             {
@@ -137,7 +140,12 @@ namespace CS2MCP
                 speed,
                 startFrame = sim.frameIndex,
                 targetFrame,
-                note = "simulation auto-pauses at targetFrame; poll /state (frameIndex) to track progress; cancel with /sim/run?cancel=true",
+                dismissPopups,
+                dismissedNow,
+                forcedPause,
+                note = forcedPause == "popup"
+                    ? "a blocking popup is holding the simulation at speed 0: pass dismissPopups=true or call /ui/popups/dismiss"
+                    : "simulation auto-pauses at targetFrame; poll /state (frameIndex) to track progress; cancel with /sim/run?cancel=true",
             });
         }
 

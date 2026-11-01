@@ -36,10 +36,22 @@ namespace CS2MCP
         /// <summary>Frame at which the simulation auto-pauses (0 = disabled).</summary>
         public uint AutoPauseTargetFrame { get; private set; }
 
-        public void SetAutoPause(uint targetFrame)
+        public void SetAutoPause(uint targetFrame, bool dismissPopups = false)
         {
             AutoPauseTargetFrame = targetFrame;
+            RunDismissesPopups = targetFrame != 0 && dismissPopups;
         }
+
+        /// <summary>
+        /// When true, blocking popups (milestone / signature unlock dialogs) are closed
+        /// automatically whenever they appear, so they never hold the simulation paused.
+        /// </summary>
+        public bool AutoDismissPopups { get; set; }
+
+        /// <summary>Dismiss blocking popups only while the current timed run is active.</summary>
+        public bool RunDismissesPopups { get; private set; }
+
+        private int m_PopupCheckCountdown;
 
         [Preserve]
         protected override void OnCreate()
@@ -88,7 +100,26 @@ namespace CS2MCP
             {
                 m_SimulationSystem.selectedSpeed = 0f;
                 AutoPauseTargetFrame = 0;
+                RunDismissesPopups = false;
                 Mod.Log.Info("timed run finished, simulation auto-paused");
+            }
+            if ((AutoDismissPopups || RunDismissesPopups) && --m_PopupCheckCountdown <= 0)
+            {
+                m_PopupCheckCountdown = 15;
+                try
+                {
+                    int closed = m_Handlers.DismissBlockingPopups();
+                    if (closed > 0)
+                    {
+                        Mod.Log.Info($"auto-dismissed {closed} blocking popup(s)");
+                    }
+                }
+                catch (Exception e)
+                {
+                    Mod.Log.Warn($"auto-dismiss failed: {e.Message}");
+                    AutoDismissPopups = false;
+                    RunDismissesPopups = false;
+                }
             }
             while (m_Pending.TryDequeue(out BridgeRequest request))
             {

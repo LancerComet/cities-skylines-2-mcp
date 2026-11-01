@@ -22,7 +22,7 @@ function isMutatingPath(path: string): boolean {
     path.startsWith("/build/") ||
     path.startsWith("/sim/") ||
     path.endsWith("/set") ||
-    ["/game/save", "/city/tiles/buy", "/transit/stops/place", "/transit/lines/create", "/transit/lines/delete"].includes(path)
+    ["/game/save", "/ui/popups/dismiss", "/city/tiles/buy", "/transit/stops/place", "/transit/lines/create", "/transit/lines/delete"].includes(path)
   );
 }
 
@@ -94,7 +94,9 @@ server.registerTool(
     title: "Get game state",
     description:
       "Get the current game state: game mode, whether a city is loaded, city name, " +
-      "simulation pause/speed and the in-game date/time.",
+      "simulation pause/speed and the in-game date/time. simulation.forcedPause is 'popup' while a blocking " +
+      "milestone/signature dialog holds the game at speed 0 (close it with cs2_dismiss_popups) and " +
+      "'unfocused' while the game window lacks focus.",
     inputSchema: {},
   },
   async () => {
@@ -166,7 +168,7 @@ server.registerTool(
     if (speed !== undefined) params.set("speed", String(speed));
     if (paused !== undefined) params.set("paused", String(paused));
     try {
-      return jsonResult(await bridgeJson(`/sim/control?${params.toString()}`));
+      return jsonResult(await bridgeJson(`/sim/control?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -274,7 +276,7 @@ server.registerTool(
     if (parameter !== undefined) params.set("parameter", String(parameter));
     if (samples !== undefined) params.set("samples", String(samples));
     try {
-      return jsonResult(await bridgeJson(`/city/statistics?${params.toString()}`));
+      return jsonResult(await bridgeJson(`/city/statistics?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -334,7 +336,7 @@ server.registerTool(
     const params = new URLSearchParams({ name, active: String(active) });
     if (adjustment !== undefined) params.set("adjustment", String(adjustment));
     try {
-      return jsonResult(await bridgeJson(`/city/policies/set?${params.toString()}`));
+      return jsonResult(await bridgeJson(`/city/policies/set?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -364,7 +366,7 @@ server.registerTool(
   async ({ service, percentage }) => {
     const params = new URLSearchParams({ service, percentage: String(percentage) });
     try {
-      return jsonResult(await bridgeJson(`/city/service-budgets/set?${params.toString()}`));
+      return jsonResult(await bridgeJson(`/city/service-budgets/set?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -394,7 +396,7 @@ server.registerTool(
     if (query) params.set("query", query);
     if (limit) params.set("limit", String(limit));
     try {
-      return jsonResult(await bridgeJson(`/prefabs?${params.toString()}`));
+      return jsonResult(await bridgeJson(`/prefabs?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -424,7 +426,7 @@ server.registerTool(
     if (rotation !== undefined) params.set("rotation", String(rotation));
     if (force) params.set("force", "true");
     try {
-      return jsonResult(await bridgeJson(`/build/place?${params.toString()}`, 15_000));
+      return jsonResult(await bridgeJson(`/build/place?${bridgeQueryString(params)}`, 15_000));
     } catch (err) {
       return errorResult(err);
     }
@@ -467,7 +469,7 @@ server.registerTool(
     if (e2 !== undefined) params.set("e2", String(e2));
     if (force) params.set("force", "true");
     try {
-      return jsonResult(await bridgeJson(`/build/road?${params.toString()}`, 15_000));
+      return jsonResult(await bridgeJson(`/build/road?${bridgeQueryString(params)}`, 15_000));
     } catch (err) {
       return errorResult(err);
     }
@@ -491,7 +493,7 @@ server.registerTool(
     if (query) params.set("query", query);
     if (limit) params.set("limit", String(limit));
     try {
-      return jsonResult(await bridgeJson(`/city/buildings?${params.toString()}`));
+      return jsonResult(await bridgeJson(`/city/buildings?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -527,7 +529,7 @@ server.registerTool(
     if (radius !== undefined) params.set("radius", String(radius));
     if (force) params.set("force", "true");
     try {
-      return jsonResult(await bridgeJson(`/build/zone?${params.toString()}`));
+      return jsonResult(await bridgeJson(`/build/zone?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -553,7 +555,7 @@ server.registerTool(
     const params = new URLSearchParams({ index: String(index), version: String(version), upgrades });
     if (side) params.set("side", side);
     try {
-      return jsonResult(await bridgeJson(`/build/upgrade?${params.toString()}`, 15_000));
+      return jsonResult(await bridgeJson(`/build/upgrade?${bridgeQueryString(params)}`, 15_000));
     } catch (err) {
       return errorResult(err);
     }
@@ -583,7 +585,7 @@ server.registerTool(
     if (radius !== undefined) params.set("radius", String(radius));
     if (limit) params.set("limit", String(limit));
     try {
-      return jsonResult(await bridgeJson(`/city/roads?${params.toString()}`));
+      return jsonResult(await bridgeJson(`/city/roads?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -644,7 +646,7 @@ server.registerTool(
     if (angleY !== undefined) params.set("angleY", String(angleY));
     if (zoom !== undefined) params.set("zoom", String(zoom));
     try {
-      return jsonResult(await bridgeJson(`/camera/set?${params.toString()}`));
+      return jsonResult(await bridgeJson(`/camera/set?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -666,7 +668,7 @@ server.registerTool(
     const params = new URLSearchParams();
     if (resolution) params.set("resolution", String(resolution));
     try {
-      return jsonResult(await bridgeJson(`/city/terrain?${params.toString()}`, 30_000));
+      return jsonResult(await bridgeJson(`/city/terrain?${bridgeQueryString(params)}`, 30_000));
     } catch (err) {
       return errorResult(err);
     }
@@ -715,7 +717,7 @@ server.registerTool(
     if (zCoord !== undefined) params.set("z", String(zCoord));
     if (radius !== undefined) params.set("radius", String(radius));
     try {
-      return jsonResult(await bridgeJson(`/city/zoning?${params.toString()}`, 20_000));
+      return jsonResult(await bridgeJson(`/city/zoning?${bridgeQueryString(params)}`, 20_000));
     } catch (err) {
       return errorResult(err);
     }
@@ -737,7 +739,7 @@ server.registerTool(
     const params = new URLSearchParams();
     if (limit) params.set("limit", String(limit));
     try {
-      return jsonResult(await bridgeJson(`/city/notifications?${params.toString()}`));
+      return jsonResult(await bridgeJson(`/city/notifications?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -815,7 +817,7 @@ server.registerTool(
   async ({ resource, fee }) => {
     const params = new URLSearchParams({ resource, fee: String(fee) });
     try {
-      return jsonResult(await bridgeJson(`/city/fees/set?${params.toString()}`));
+      return jsonResult(await bridgeJson(`/city/fees/set?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -845,7 +847,7 @@ server.registerTool(
     if (radius !== undefined) params.set("radius", String(radius));
     if (limit) params.set("limit", String(limit));
     try {
-      return jsonResult(await bridgeJson(`/city/objects?${params.toString()}`));
+      return jsonResult(await bridgeJson(`/city/objects?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -860,20 +862,27 @@ server.registerTool(
       "Unpause and run the simulation at the given speed, auto-pausing after the requested number of " +
       "in-game hours. Returns immediately with the target frame; poll cs2_game_state (frameIndex) to " +
       "track progress. Use cancel=true to stop early. The core loop for autonomous mayoring: " +
-      "act, run time forward, observe results.",
+      "act, run time forward, observe results. Milestone / signature-building popups force the game to " +
+      "speed 0 while open; by default this run closes them automatically (dismissPopups) so it is not " +
+      "silently held paused. The response's forcedPause tells you if something still holds it.",
     inputSchema: {
       hours: z.number().min(0.1).max(96).optional().describe("In-game hours to run (required unless cancel)"),
       speed: z.number().min(0.5).max(8).optional().describe("Simulation speed while running (default 4)"),
       cancel: z.boolean().optional().describe("true to cancel a timed run and pause now"),
+      dismissPopups: z
+        .boolean()
+        .optional()
+        .describe("Auto-close blocking milestone/signature popups during this run (default true)"),
     },
   },
-  async ({ hours, speed, cancel }) => {
+  async ({ hours, speed, cancel, dismissPopups }) => {
     const params = new URLSearchParams();
     if (cancel) params.set("cancel", "true");
+    if (!cancel) params.set("dismissPopups", String(dismissPopups ?? true));
     if (hours !== undefined) params.set("hours", String(hours));
     if (speed !== undefined) params.set("speed", String(speed));
     try {
-      return jsonResult(await bridgeJson(`/sim/run?${params.toString()}`));
+      return jsonResult(await bridgeJson(`/sim/run?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -895,7 +904,7 @@ server.registerTool(
     const params = new URLSearchParams();
     if (name) params.set("name", name);
     try {
-      return jsonResult(await bridgeJson(`/game/save?${params.toString()}`));
+      return jsonResult(await bridgeJson(`/game/save?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -932,7 +941,7 @@ server.registerTool(
     const params = new URLSearchParams({ nodes });
     if (prefab) params.set("prefab", prefab);
     try {
-      return jsonResult(await bridgeJson(`/build/district?${params.toString()}`, 15_000));
+      return jsonResult(await bridgeJson(`/build/district?${bridgeQueryString(params)}`, 15_000));
     } catch (err) {
       return errorResult(err);
     }
@@ -982,7 +991,7 @@ server.registerTool(
     });
     if (adjustment !== undefined) params.set("adjustment", String(adjustment));
     try {
-      return jsonResult(await bridgeJson(`/district/policies/set?${params.toString()}`));
+      return jsonResult(await bridgeJson(`/district/policies/set?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -1646,6 +1655,68 @@ server.registerTool(
     if (force !== undefined) params.set("force", String(force));
     try {
       return jsonResult(await bridgeJson(`/transit/lines/vehicles/set?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_popups",
+  {
+    title: "Blocking popup status",
+    description:
+      "Status of blocking UI popups (milestone reached, signature building unlocked). While one is open the game " +
+      "forces the simulation to speed 0 every frame, so run/unpause commands appear to do nothing. Shows the " +
+      "pending popups, whether blocking popups are enabled, auto-dismiss state and the current forced-pause reason.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      return jsonResult(await bridgeJson("/ui/popups"));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_dismiss_popups",
+  {
+    title: "Close blocking popups",
+    description:
+      "Close every open milestone / signature-building popup exactly like its own close button, releasing the " +
+      "forced pause. Milestone rewards are granted before the popup appears, so nothing is lost.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      return jsonResult(await bridgeJson("/ui/popups/dismiss"));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_set_popups",
+  {
+    title: "Configure blocking popups",
+    description:
+      "blocking=false turns off the game's own 'blocking popups' interface option (saved to the game settings, " +
+      "same as Options > Interface) so milestone/signature dialogs never pause the game. autoDismiss=true makes " +
+      "the mod close such popups whenever they appear (not persisted; resets when the game restarts).",
+    inputSchema: {
+      blocking: z.boolean().optional().describe("Game option: show blocking popups (false = never show them)"),
+      autoDismiss: z.boolean().optional().describe("Mod option: close blocking popups automatically"),
+    },
+  },
+  async ({ blocking, autoDismiss }) => {
+    const params = new URLSearchParams();
+    if (blocking !== undefined) params.set("blocking", String(blocking));
+    if (autoDismiss !== undefined) params.set("autoDismiss", String(autoDismiss));
+    try {
+      return jsonResult(await bridgeJson(`/ui/popups/set?${bridgeQueryString(params)}`));
     } catch (err) {
       return errorResult(err);
     }
