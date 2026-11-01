@@ -125,6 +125,12 @@ namespace CS2MCP
                     return SimControl(request);
                 case "/sim/run":
                     return SimRun(request);
+                case "/ui/popups":
+                    return GetPopups();
+                case "/ui/popups/dismiss":
+                    return DismissPopups();
+                case "/ui/popups/set":
+                    return SetPopups(request);
                 case "/game/save":
                     return SaveGame(request);
                 case "/city/tiles":
@@ -207,6 +213,8 @@ namespace CS2MCP
                     effectiveSpeed = sim.smoothSpeed,
                     frameIndex = sim.frameIndex,
                     gameDateTime = SafeGameDateTime(time),
+                    // "popup" = a blocking dialog holds speed at 0 (see /ui/popups), "unfocused" = window lost focus
+                    forcedPause = ForcedPauseReason(),
                 };
             }
 

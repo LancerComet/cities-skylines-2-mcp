@@ -171,13 +171,17 @@ Start the game, load a save, then ask Claude: "How are my city's finances?", "Zo
 | Tool | Description |
 |---|---|
 | `cs2_set_simulation` | Pause / set speed (0-8) |
-| `cs2_run_simulation` | Timed run: simulate N in-game hours, then auto-pause |
+| `cs2_run_simulation` | Timed run: simulate N in-game hours, then auto-pause (closes blocking milestone popups by default) |
+| `cs2_popups` | Blocking popup status: pending milestone/signature dialogs, forced-pause reason |
+| `cs2_dismiss_popups` | Close open milestone/signature popups (releases the forced pause) |
+| `cs2_set_popups` | Turn the game's blocking popups off, or let the mod auto-close them |
 | `cs2_save_game` | Trigger a save (recommended before large AI operations) |
 
 ## Troubleshooting
 
 - **`cs2_ping` unreachable**: the mod is not loaded. Check `%USERPROFILE%\AppData\LocalLow\Colossal Order\Cities Skylines II\Logs\CS2MCP.log` (should contain `bridge listening on ...`); if the file is missing, check `Player.log` in the same folder.
 - **409 no city loaded**: still in the main menu — load a save first.
+- **Simulation stays paused / `cs2_run_simulation` does nothing**: a milestone or signature-building popup is open; while it is, the game forces speed 0 every frame. `cs2_game_state` reports `forcedPause: "popup"`; close it with `cs2_dismiss_popups`, or disable it with `cs2_set_popups blocking=false`.
 - **Lock states look wrong**: unpause briefly once after loading (lock-related endpoints return a `stalenessWarning` until the simulation has ticked).
 - **Port conflict**: set `CS2MCP_PORT` for the game process and update `CS2_BRIDGE_URL` in `.env` to match.
 

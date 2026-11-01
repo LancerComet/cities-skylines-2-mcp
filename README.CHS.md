@@ -171,13 +171,17 @@ claude mcp add cs2 -- node <仓库路径>\mcp-server\dist\index.js
 | 工具 | 说明 |
 |---|---|
 | `cs2_set_simulation` | 暂停/调速（0-8） |
-| `cs2_run_simulation` | 定时快进：跑 N 游戏小时后自动暂停 |
+| `cs2_run_simulation` | 定时快进：跑 N 游戏小时后自动暂停（默认自动关闭里程碑等阻断式弹窗） |
+| `cs2_popups` | 阻断式弹窗状态：待显示的里程碑/地标弹窗、强制暂停原因 |
+| `cs2_dismiss_popups` | 关闭里程碑/地标解锁弹窗（解除强制暂停） |
+| `cs2_set_popups` | 关闭游戏的阻断式弹窗选项，或让 Mod 自动关闭弹窗 |
 | `cs2_save_game` | 触发存档（建议 AI 大规模操作前调用） |
 
 ## 排障
 
 - **`cs2_ping` 连不上**：Mod 未加载。查 `%USERPROFILE%\AppData\LocalLow\Colossal Order\Cities Skylines II\Logs\CS2MCP.log`（正常应有 `bridge listening on ...`）；无此文件则查同目录 `Player.log`。
 - **409 no city loaded**：还在主菜单，先读档。
+- **模拟一直暂停 / `cs2_run_simulation` 没反应**：有里程碑或地标解锁弹窗打开，弹窗存在时游戏每帧强制速度为 0。`cs2_game_state` 会返回 `forcedPause: "popup"`；用 `cs2_dismiss_popups` 关闭，或用 `cs2_set_popups blocking=false` 关掉此类弹窗。
 - **锁定状态显示异常**：读档后先短暂解除暂停一次（相关接口在未跑过模拟时会返回 `stalenessWarning`）。
 - **端口冲突**：给游戏进程设 `CS2MCP_PORT`，并同步修改 `.env` 中的 `CS2_BRIDGE_URL`。
 

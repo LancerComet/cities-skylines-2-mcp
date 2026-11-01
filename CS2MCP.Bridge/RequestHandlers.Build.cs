@@ -531,6 +531,10 @@ namespace CS2MCP
             bool isFlora = EntityManager.HasComponent<Game.Objects.Tree>(entity)
                 || EntityManager.HasComponent<Game.Objects.Plant>(entity);
             bool isDistrict = EntityManager.HasComponent<Game.Areas.District>(entity);
+            if (!isBuilding && !isNetEdge && !isFlora && !isDistrict && EntityManager.HasComponent<Game.Net.Node>(entity))
+            {
+                return NodeDemolishHint(entity);
+            }
             if (!isBuilding && !isNetEdge && !isFlora && !isDistrict)
             {
                 return BridgeResponse.Error(400, "entity is not a building, road segment, tree/plant or district; refusing to delete");
