@@ -149,6 +149,14 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached); pass force=true to place anyway");
             }
+            if (EntityManager.HasComponent<PlaceableObjectData>(prefabEntity)
+                && (EntityManager.GetComponentData<PlaceableObjectData>(prefabEntity).m_Flags & Game.Objects.PlacementFlags.Shoreline) != 0)
+            {
+                // A shoreline building placed beside a road ends up partly in the water (flooded and destroyed)
+                // or away from it (no water intake). It has to be snapped to the shore.
+                return BridgeResponse.Error(409,
+                    $"'{prefab.name}' must stand on the water's edge: use cs2_place_shoreline (its response says how to give it road/pipe access)");
+            }
             float lotDepth = EntityManager.HasComponent<BuildingData>(prefabEntity)
                 ? EntityManager.GetComponentData<BuildingData>(prefabEntity).m_LotSize.y * 8f
                 : 16f;
@@ -377,6 +385,7 @@ namespace CS2MCP
                 waterSurfaceHeight,
                 snapRadius = radius,
                 shorelinePlacement = (flags & Game.Objects.PlacementFlags.Shoreline) != 0,
+                roadAccess = RoadAccessHint(prefabEntity, position, direction.xz),
             };
             if (dryRun)
             {

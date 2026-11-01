@@ -439,7 +439,7 @@ server.registerTool(
     title: "Build a road segment",
     description:
       "Build any network segment between two world coordinates (terrain-following): roads, train tracks, " +
-      "pedestrian paths, power lines, pipes 鈥?any prefab from cs2_find_prefabs category 'road' or 'net'. " +
+      "pedestrian paths, power lines, pipes - any prefab from cs2_find_prefabs category 'road' or 'net'. " +
       "Straight by default; pass cx/cz for a curved segment through that control point. Length 8-1500m. " +
       "Endpoints on existing nodes connect to them. Costs city money; fails with an explanation if blocked.",
     inputSchema: {
@@ -598,7 +598,7 @@ server.registerTool(
     title: "Demolish a building or road segment",
     description:
       "Demolish (bulldoze) one building (from cs2_list_buildings) or road segment (from cs2_list_roads) " +
-      "identified by its entity index and version. Irreversible 鈥?double-check the target first.",
+      "identified by its entity index and version. Irreversible - double-check the target first.",
     inputSchema: {
       index: z.number().int().describe("Entity index from cs2_list_buildings"),
       version: z.number().int().describe("Entity version from cs2_list_buildings"),
@@ -627,7 +627,7 @@ server.registerTool(
     description:
       "Point the gameplay camera: set the pivot (look-at world coordinates; height auto-sampled from " +
       "terrain unless y given), compass rotation angleX (degrees), tilt angleY (0-89) and zoom distance. " +
-      "Combine with cs2_screenshot to LOOK at any place in the city 鈥?the AI's own eyes.",
+      "Combine with cs2_screenshot to LOOK at any place in the city - the AI's own eyes.",
     inputSchema: {
       x: z.number().optional().describe("Pivot X (requires z)"),
       z: z.number().optional().describe("Pivot Z (requires x)"),
@@ -1487,7 +1487,20 @@ server.registerTool(
     if (dryRun) params.set("dryRun", "true");
     if (force) params.set("force", "true");
     try {
-      return jsonResult(await bridgeJson(`/build/place/shoreline?${bridgeQueryString(params)}`, 15_000));
+      if (dryRun) {
+        return jsonResult(await bridgeJson(`/build/place/shoreline?${bridgeQueryString(params)}`, 15_000));
+      }
+      // Compute the road-access hint first (the real placement completes asynchronously and cannot carry it).
+      const probe = new URLSearchParams(params);
+      probe.set("dryRun", "true");
+      let roadAccess: unknown = undefined;
+      try {
+        roadAccess = ((await bridgeJson(`/build/place/shoreline?${bridgeQueryString(probe)}`, 15_000)) as any)?.computed?.roadAccess;
+      } catch {
+        /* the real call below reports the error */
+      }
+      const placed = (await bridgeJson(`/build/place/shoreline?${bridgeQueryString(params)}`, 15_000)) as any;
+      return jsonResult(roadAccess ? { ...placed, roadAccess } : placed);
     } catch (err) {
       return errorResult(err);
     }
@@ -1717,6 +1730,43 @@ server.registerTool(
     if (autoDismiss !== undefined) params.set("autoDismiss", String(autoDismiss));
     try {
       return jsonResult(await bridgeJson(`/ui/popups/set?${bridgeQueryString(params)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "cs2_wait_simulation",
+  {
+    title: "Wait for the simulation",
+    description:
+      "Block (up to maxSeconds, max 55) until the simulation is paused again - e.g. a cs2_run_simulation timed run " +
+      "finished - then return the game state and city overview. Use it instead of polling cs2_game_state in a loop. " +
+      "Returns early if a blocking popup holds the game (forcedPause='popup').",
+    inputSchema: {
+      maxSeconds: z.number().min(1).max(55).optional().describe("Longest time to wait in real seconds (default 50)"),
+    },
+  },
+  async ({ maxSeconds }) => {
+    const deadline = Date.now() + (maxSeconds ?? 50) * 1000;
+    try {
+      let state: any = await bridgeJson("/state");
+      while (Date.now() < deadline) {
+        const sim = state?.simulation;
+        if (!sim || sim.paused || sim.forcedPause === "popup") break;
+        await new Promise((r) => setTimeout(r, 2000));
+        state = await bridgeJson("/state");
+      }
+      const overview = await bridgeJson("/city/overview").catch(() => null);
+      const sim = state?.simulation;
+      return jsonResult({
+        finishedWaiting: Boolean(sim?.paused),
+        stillRunning: Boolean(sim && !sim.paused),
+        state,
+        overview,
+        note: sim && !sim.paused ? "still running: call cs2_wait_simulation again or do other read-only checks" : undefined,
+      });
     } catch (err) {
       return errorResult(err);
     }
