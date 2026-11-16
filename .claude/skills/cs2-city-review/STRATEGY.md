@@ -1,150 +1,69 @@
 # CS2 strategy reference
 
-Read this with SKILL.md before a review. It combines community guides (researched November 2026) with
-lessons learned in this city. Most web guides date from the 2023 launch; the economy was reworked in
-patch 1.1.5f1 ("Economy 2.0", June 2024), so older tax and rent numbers may be wrong. Trust the
-in-game numbers (`cs2_demand`, `cs2_budget`) over any guide.
+The rules themselves live in the playbook: **[docs/PLAYBOOK.md](../../../docs/PLAYBOOK.md)** (by topic)
+and **[docs/NEW-CITY-CHECKLIST.md](../../../docs/NEW-CITY-CHECKLIST.md)** (ordered steps for a fresh map).
+This file keeps the research background behind them and the longer how-tos. Nothing here depends on a
+particular save; a city's coordinates and history belong in its memory notes.
 
-## 1. Progression and development points
+Most web guides date from the 2023 launch. The economy was reworked in patch 1.1.5f1 ("Economy 2.0",
+June 2024): no government subsidies, and taxes affect demand more strongly. Trust the in-game numbers
+(`cs2_demand`, `cs2_budget`) over any guide.
 
-- **Check development points every review** (`cs2_dev_tree`; until the MCP server reconnects, use the
-  bridge directly: `GET http://127.0.0.1:8642/city/devtree`). This city once sat on 36 unspent points.
-  As a result, the hospital, highways, telecom, recycling and solar all looked "milestone-locked".
-- Points come from milestones. Nodes need only their parent node, not other branches. Spend on what
-  fixes a current problem, not "one of everything".
-- Good order, matching community consensus and this city:
-  1. Roads: Advanced Road Services (traffic controls).
-  2. Highways and Large Roads.
-  3. Roundabouts.
-  4. Health: Hospital, Crematorium.
-  5. Garbage: Recycling, Incinerator.
-  6. Communications: Telecom Tower (internet complaints), Post Sorting Facility.
-  7. Electricity: Advanced Electricity, then Solar (Zero Emission goal).
-  8. Water Treatment Plant.
-  9. Education: College, University.
-  10. Welfare Office, Police HQ.
-  11. Park Maintenance and Large Parks.
-  12. Transport: Train; then Tram and Subway once there is density to serve.
-- Still to buy as points arrive: Server Farm, Fire Station, Sports Parks, Harbor, Tram, Medical and
-  Technical University, Parking Areas, City Hall, Intersections.
+## Development points
 
-## 2. Money
+- Points come only from milestones. A node needs just its parent node, not other branches.
+- Check `cs2_dev_tree` after every milestone. A city once sat on 36 unspent points while the hospital,
+  highways, telecom, recycling and solar all looked "milestone-locked".
+- Spend on what fixes a current problem. Order that matched community consensus and worked in practice:
+  Advanced Road Services → Highways and Large Roads → Roundabouts → Hospital, Crematorium → Recycling,
+  Incinerator → Telecom Tower, Post Sorting → Advanced Electricity, Solar → Water Treatment → College,
+  University → Welfare, Police HQ → Park Maintenance, Large Parks → Train, Tram, Subway → Intersections.
+- Late game: unique buildings (space centre, radio telescope, central bank, airport) add attractiveness
+  and XP; never gas power if going for Zero Emission.
 
-- **"Paid Outside Services" (Import City Services) is a trap at scale.** At 13k people it cost about
-  $2.17M a month and turned +$566k into −$1.63M. Keep it OFF, and build enough fire, police, clinics,
-  hospitals and cemeteries instead.
-- Since Economy 2.0 there are no government subsidies, and taxes affect demand more strongly. Move
-  taxes 1–2 points at a time and watch the `Taxes` factor in `cs2_demand`.
-- Loans are fine for a big one-off build (hospital $1.88M) when monthly income clearly covers the
-  repayment. Repay when cash builds up.
-- Upgrading an existing service is often cheaper than building a new one.
+## Grade-separated ramps with `cs2_connect_road`
 
-## 3. Land value, pollution and noise
+How the elevation parameters work (from `BridgeToolSystem.cs` and `BridgeRoadToolSystem.cs`):
+- `e1`/`e2` are metres **above the terrain** at that point, not absolute height. The curve follows the
+  ground and is lifted by a linear blend from `e1` to `e2`. Over sloping ground, aim for clearance over
+  the road below, not a fixed height.
+- They apply only to **free** ends. An end that snaps to an existing node or segment takes that node's
+  height. Start a ramp snapped at grade (or to an elevated node) and end each piece free with `e2` set;
+  the next piece snaps onto that node and inherits its height.
+- Use `snap` 3–5 so the free elevated end isn't pulled onto a nearby ground junction. Never let a
+  piece's start or end sit within snap range of the road being crossed.
+- Climb about 6–8% (e.g. +6 m per 80–100 m) or validation fails. Reach ~13 m clearance before the
+  crossing, cross mid-segment, descend the same way. Keep the span over a highway ≤ 60 m.
+- Negative values make tunnels; an underpass needs the same ramp length below ground.
+- Left exits rarely fit between close carriageways. A **loop ramp** works instead: exit right, turn
+  270° while climbing, cross both carriageways at a right angle ~13 m up, come down into the grid.
 
-- Land value decides what grows and how dense it gets. Services, parks, transit and low pollution
-  raise it. Air, ground and noise pollution all suppress it, and pollution also lowers citizens'
-  health.
-- Industry, landfills and incinerators go downwind (smoke here drifts north-north-east) and on land
-  without groundwater. **Re-measure the plume before every residential build.**
-- Landfills are strong air polluters (this city's peaked at about 9,000). Move them downwind, and
-  replace them with recycling and incineration as garbage grows. Higher-density and low-education
-  households make more garbage.
-- Noise: keep homes away from industry, turbines and busy arterials. Use shops or offices as a buffer
-  strip between industry and homes. Road trees, sound barriers on highways, and small or pedestrian
-  streets in neighbourhoods also help.
+## Alternative intersections (FHWA)
 
-## 4. Traffic: modern real-world solutions
+DDI, Michigan left, RCUT and continuous-flow designs all remove left turns across oncoming traffic,
+cutting signal phases and conflict points (RCUT: 18 vs 32). The cheapest CS2 forms:
+- **One-way couplet:** two parallel avenues as `Medium Road Oneway` in opposite directions (same 24 m
+  width, no demolition; `cs2_replace_road` with `invert` sets direction). Match tram/bus loops to it.
+- **Merge past the signal:** end an inbound ramp ~60 m beyond the signalised junction (snap 2) and set
+  the merge node `nolights`.
 
-- **Road hierarchy, fewer conflicting junctions and bypasses work better than wider roads.**
-  Extra lanes attract more cars.
-- **Every district needs a second way out.** A single exit (here, the boulevard to one interchange)
-  will choke. Give large districts their own collector straight to a highway ramp.
-- **Grade separation.** Build interchanges with ramps and flyovers instead of at-grade highway
-  junctions:
-  - Left exits rarely fit between close carriageways. Use a **loop ramp** (cloverleaf style): exit
-    right, turn 270° while climbing, cross both carriageways at a right angle about 13 m up, then
-    come down into the street grid.
-  - With `cs2_connect_road`, build the ramp in pieces and climb with `e2` on the pieces before the
-    crossing. How the elevation parameters work (from `BridgeToolSystem.cs` and `BridgeRoadToolSystem.cs`):
-    - `e1`/`e2` are metres **above the terrain** at that point, not absolute height. The curve follows
-      the ground and is lifted by a linear blend from `e1` to `e2`. Over sloping ground, aim for clearance
-      over the road below, not a fixed absolute height.
-    - They apply only to **free** ends. An end that snaps to an existing node or segment takes that
-      node's height and ignores `e1`/`e2`. Start a ramp snapped at grade (or to an elevated node), and end
-      each piece free with `e2` set. The next piece snaps onto that new node and inherits its height.
-    - Use `snap` 3–5 so the free elevated end isn't pulled onto a nearby ground junction. Never let a
-      piece's start or end sit within snap range of the road you're crossing.
-    - Keep each piece's climb gentle (about 6–8% grade, e.g. +6 m per 80–100 m) or validation fails.
-      Reach about 13 m clearance before the crossing, cross mid-segment, then descend the same way.
-    - Negative values make tunnels. An underpass needs the same ramp length below ground.
-  - Cross mid-segment. A curve that passes through an existing node joins it at grade.
-- **Freight bypass.** Industrial trucks must reach the highway without crossing neighbourhoods. Use
-  a dedicated highway or arterial from industry to the highway, a cargo train terminal at each
-  industrial hub, or a harbor. Several small cargo hubs beat one big one.
-- **Roundabouts** keep traffic moving where a signalised junction would stop it. Space junctions out;
-  don't put transit stops on corners.
-  - Place one with `cs2_place_roundabout` on a junction id from `cs2_road_graph`. Find the prefabs
-    with `cs2_find_prefabs` category `netobject`, query `round`, and pick a size that fits between
-    the neighbouring junctions. Placing a new one on a junction that already has one replaces it.
-  - Pre-built intersections and interchanges from the Intersections development node are **asset
-    stamps** (`cs2_find_prefabs` category `stamp`). Place them with `cs2_place_building` on a cleared
-    site, then join their roads to the network with `cs2_connect_road`.
-- **Transit vehicle count.** `cs2_set_line_vehicles` only picks the model. To run more or fewer
-  vehicles on a line, use `cs2_set_line_policy` with the line's vehicle-count policy (listed by
-  `cs2_line_policies`).
-- **Transit.** Transit lanes take an existing lane, so use them where frequent lines justify it. Run
-  trams or metro along the busiest corridors; connect paths straight to stations.
-- **Alternative intersections (FHWA; Texas DDI / U-turns, Michigan left, RCUT, continuous-flow).**
-  They all remove left turns that cross oncoming traffic, cutting signal phases and conflict points
-  (RCUT: 18 vs 32). Cheapest CS2 forms that worked here:
-  - **One-way couplet:** two parallel avenues as `Medium Road Oneway` in opposite directions
-    (same 24 m width, so no demolition; `cs2_replace_road` with `invert` sets direction). Every
-    junction becomes 2-phase. Match it to tram/bus loop directions.
-  - **Merge past the signal:** end a busy inbound ramp on the arterial ~60 m beyond the signalised
-    junction (snap 2, or the game snaps it onto the junction), then set that merge node `nolights`.
-  - **Second way in:** every district and industrial area needs two entrances to different points
-    of the network (here: north industry via 2220 and 2500; west district to the bypass).
-- **Measure over at least 8-12 in-game hours.** Flow values are period averages; a 4-hour check
-  understates the effect of a change.
-- **Draw the network.** Dump `/city/road-graph` (radius 2600) and render it with Pillow, coloured
+## Analysis how-tos
+
+- **Draw the network:** dump `cs2_road_graph` for a large radius and render it (e.g. Pillow), coloured
   by flow, to see chokes and one-way directions before redesigning.
-- **Tram tracks on roads** are a road upgrade (`cs2_upgrade_road` upgrades=tram), not a separate
-  track network; drawing a Double Tram Track over a road builds nothing.
-- **Stops and stations unlock when their depot exists.** Bus stops, tram stops and metro/train
-  stations report "locked" until a Bus Depot, Tram Depot, Subway Yard or train depot is built,
-  even after the development node is bought. Build the depot first, then place stops.
-- **Active transport.** Bike greenways and pedestrian paths that link homes, schools and job
-  centres take short trips off the roads. Chirper asks for bike lanes; road bike-lane upgrades are a
-  separate unlock.
+- **Wind direction:** there is no wind tool. Read `cs2_gridmap airPollution` around existing industry
+  and note which way the plume extends.
+- **Groundwater and resources:** `cs2_gridmap groundWater`, `cs2_list_map_tiles` features
+  (buildable, groundwater, fertile, ore, oil, water).
+- **Chirper** names exact shortfalls ("crime", "packages taking ages", "no internet", "smog", "noise",
+  "can't find a job"). The MCP can only read it from a screenshot while the panel is open.
 
-## 5. Happiness (wellbeing + health)
+## Happiness
 
-- Happiness combines wellbeing and health. The main levers are:
-  - Health: clinics first, then a hospital; clean air and ground.
-  - Education: there are five levels; elementary, high school, college and university each cover
-    one.
-  - Low crime: police coverage.
-  - Working services: water, power, garbage, mail, internet.
-  - Traffic flow.
-  - Parks.
-- **Read Chirper** (screenshot the panel, or ask the user to scroll it). It names the exact
-  shortfalls, for example "crime", "packages taking ages", "no internet", "no bike lanes", "smog",
-  "noise", "can't find a job".
-
-## 6. Utilities at scale
-
-- **Roads carry power and pipes.** Before closing or removing a road (for example a highway
-  crossing), lay Low-voltage Ground Cables and Combined Large Pipes across the gap first, or whole
-  districts lose power and water. This happened here: 820 buildings went dark.
-- Wind output swings with the weather: here, rated 466 MW delivered only about 406 MW. Keep about
-  25% margin over consumption, and add steady baseload (geothermal, or gas if accepted) as the city
-  grows.
-
-- **Trunk pipes.** Roads carry only small built-in pipes. Once the city passes about 10k people, add
-  Large Water Pipe, Large Sewage Pipe or Combined Large Pipe trunks from pumps and outlets into each
-  district. Here, a single Small Sewage Pipe was carrying the whole city's sewage.
-- Treat sewage (Water Treatment Plant) before it reaches the bay, and keep outlets downstream of
-  wells.
+Happiness combines wellbeing and health. Levers: clinics then hospitals, clean air and ground, five
+education levels (elementary, high school, college, university), police coverage, working utilities
+(water, power, garbage, mail, internet), traffic flow, parks. Passive XP scales with population and
+happiness, so quality pays for progression.
 
 ## Sources
 

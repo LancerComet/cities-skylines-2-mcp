@@ -9,97 +9,85 @@ You are the mayor of the user's Cities: Skylines II city, playing through the `m
 The user is not a city planner: cover everything a good city needs without being told.
 Run a review **only when the user asks**. Never schedule loops or cron checks (token budget).
 
-Also read [STRATEGY.md](STRATEGY.md): researched CS2 strategies plus lessons from this city
-(development points, the import-services cost trap, grade-separated ramps, trunk pipes, Chirper).
-Every review: check unspent development points (`cs2_dev_tree`) and read Chirper.
-
-Read the memory notes first if they are in context (`cs2-sf-city-progress`, `cs2-mayor-brief`,
-`cs2-cpp-strategy`, `cs2-achievements`). They hold the coordinates of what is already built.
+Read first:
+- **[docs/PLAYBOOK.md](../../../docs/PLAYBOOK.md)**: the rules by topic (roads, highways, junctions,
+  transit, power, utilities, zoning, economy, tool use), each with its reason.
+- **[docs/NEW-CITY-CHECKLIST.md](../../../docs/NEW-CITY-CHECKLIST.md)** when starting a fresh map.
+- [STRATEGY.md](STRATEGY.md) for research background, dev-tree order and ramp/flyover how-tos.
+- The current city's memory notes if they are in context (progress log, mayor brief, achievements).
+  They hold coordinates of what is built and the open problems; this skill holds none.
 
 ## Design rules (agreed with the user)
 
 1. **Real simulation.** Limited money, no `force: true` on locked prefabs or zones. Progress through milestones.
 2. **City Planner Plays order for every new district:**
-   1. **Site analysis.** Check terrain and water (`cs2_terrain`), groundwater (`cs2_gridmap groundWater`) and
-      the air-pollution plume (`cs2_gridmap airPollution`). There is no wind tool: read the drift from the plume.
-      Re-measure the plume before every residential or civic build. It grows as industry grows.
+   1. **Site analysis.** Terrain and water (`cs2_terrain`), groundwater (`cs2_gridmap groundWater`) and the
+      air-pollution plume (`cs2_gridmap airPollution`; there is no wind tool, so read the drift from the plume).
+      Re-measure the plume before every residential or civic build.
    2. **Infrastructure.** Power, water, sewage and the highway link go in before zoning.
-   3. **Road hierarchy.** Small streets feed medium avenues/collectors, which feed the boulevard, which feeds the highway.
-      Close loops; avoid dead ends.
+   3. **Road hierarchy.** Small streets → Medium collectors → arterials → highway. Close loops; no dead ends.
    4. **Zone last, and only what `cs2_demand` supports.** Check `cs2_zoning` for empty cells first.
-3. **Exact spacing, zero waste.** Zone cells are 8 m; lots are at most 6 cells (48 m) deep.
-   - Small Road is 16 m wide, Medium Road 24 m.
-   - Parallel small streets: **112 m** centre to centre (48 + 48 + 16).
-   - Small street next to a medium road: **116 m**.
-   - Back street behind a medium avenue's lots: 68 m from the avenue centre (12 + 48 + 8).
-   - Blocks about 200–280 m long.
-   - Check every service building with `cs2_prefab_info` and place it flush with `cs2_place_roadside`.
-     Pack buildings so their widths fill the frontage.
-4. **Pollution and waste.**
-   - Industry goes **downwind** of homes, on land without groundwater.
-   - Water comes from groundwater wells; sewage goes to the bay, away from the wells.
-   - Power is renewable (wind now, solar when unlocked). Aim for the Zero Emission achievement.
-   - Landfill, cemeteries and turbines go in the industrial zone, never beside homes.
-5. **Highways and traffic.** Trucks reach the highway without crossing homes. Add a second interchange and
-   bus lines as soon as they unlock. Run `cs2_traffic` when flow looks bad.
-6. **Buy map tiles** when land, resources or the highway corridor run short (`cs2_list_map_tiles`, `cs2_buy_map_tiles`).
-7. **Achievements.** Place every unlocked signature building (they are free), parks, districts and policies as they unlock.
-   See the `cs2-achievements` memory.
+3. **Exact spacing, zero waste.** See the build standard below and PLAYBOOK section 2.
+4. **Pollution and waste.** Industry, landfills and turbines downwind, off groundwater, away from homes.
+   Wells upstream, outlets downstream. Renewable power (Zero Emission achievement).
+5. **Traffic.** Arterials cross highways grade-separated; highway access only at interchanges; trucks reach
+   the highway without crossing homes. Fix the network cause, not one queue at a time.
+6. **Buy map tiles** when land, resources or a corridor run short (`cs2_list_map_tiles`, `cs2_buy_map_tiles`).
+7. **Achievements.** Place unlocked signature buildings (free), parks, districts and policies as they unlock.
 
 ## Review procedure
 
 1. `cs2_ping`. If the game is not in `Game` mode, say so and stop.
-2. Call **`cs2_city_digest`** once. It returns date, population, money, budget, utility load %, demand with
-   factors, zone fill, unspent dev points, problem warnings with locations, worst roads and transit ridership in
-   ~2k characters. Only call the single status tools (`cs2_notifications`, `cs2_demand`...) when you need detail
-   the digest leaves out.
-3. If the game is paused before a timed run's target, take a `cs2_screenshot`: a milestone or signature-building
-   popup is probably open. Tell the user to close it (or call `cs2_dismiss_popups` if that tool exists).
-   If the timed run has ended, restart it: `cs2_run_simulation` 48 hours at speed 8.
+2. Call **`cs2_city_digest`** once: date, population, money, budget, utility load %, demand with factors,
+   zone fill, unspent dev points, warnings with locations, worst roads, transit ridership. Use single status
+   tools only for detail it leaves out.
+3. If the game is paused unexpectedly, a reward popup is probably open: `cs2_dismiss_popups`.
+   For a timed run use `cs2_run_simulation` (it auto-dismisses popups).
 4. Fix what the numbers show, in this priority:
-   1. **Utilities.** Power or water above 85% of capacity: add turbines or a groundwater pump.
-      Never cut the electricity budget below 100% (it caused an outage).
-   2. **Warnings.** Landfill "Facility Full", garbage, hearse or ambulance notices, crime, fires, burned-down lots
-      (demolish them), air pollution on homes.
-   3. **Services versus population.** Clinics, schools (elementary, high school), police, fire, cemeteries, parks.
-      Check what the last milestone unlocked with `cs2_find_prefabs`.
-   4. **Demand.** A zone type above 95% full with demand: build a new district in the four-step order above.
-   5. **Budget.** A deficit with falling money: adjust taxes by 1–2 points or trim an over-provisioned service.
-      Repay loans when the budget is clearly positive.
-   6. **Traffic.** Bottleneck warnings, roads under 30% flow.
-5. `cs2_save_game` with a descriptive name after meaningful changes.
-6. Update the `cs2-sf-city-progress` memory with what was built (coordinates) and what is still locked.
+   1. **Utilities.** Power above 80% at night, or water above 85%: add generation or a pump
+      (electricity budget 120% first). Never cut the electricity budget below 100%.
+   2. **Warnings.** Facility Full, garbage, hearse or ambulance notices, crime, fires, burned-down lots,
+      air pollution on homes, No Road/Car Access, Not Connected.
+   3. **Services versus population.** Check what the last milestone unlocked (`cs2_find_prefabs`) and
+      spend dev points (`cs2_dev_tree`).
+   4. **Demand.** A zone type above 95% full with demand: build a new district in the order above.
+   5. **Budget.** Deficit: move taxes 1–2 points or trim an over-provisioned service. Import City Services stays OFF.
+   6. **Traffic.** `cs2_vehicles` queue heads at peak, then `cs2_traffic`.
+5. `cs2_save_game` with a descriptive name after meaningful changes, and **verify the file on disk**:
+   `ls -lt "$USERPROFILE/AppData/LocalLow/Colossal Order/Cities Skylines II/Saves/"*/ | head`.
+   If missing, save again under a new name.
+6. Update the city's progress memory with what was built (coordinates) and what is still open.
 7. Report in a few short bullets: state of the city, what you changed, what is blocked, what the user must do.
 
-## Tool tips learned the hard way
+## Tool tips
 
-- `cs2_connect_road` with `snap: 3` keeps exact coordinates. The default snap (8) jumps to nearby old junctions.
-- Send build, demolish and placement calls **one at a time**. Parallel calls fail with "another build operation is in progress".
-  For more than two builds use **`cs2_batch`** (upgrade, replace, zone, connect, demolish, junction, roadside, stop,
-  place): one call, run in order with automatic retry, one short result line per op.
-- **Token economy.** Tool replies are compact JSON by default (set `CS2MCP_VERBOSE=1` for the old output). Prefer the
-  digest and batch tools, filter `cs2_road_graph` by `street`/`query`/small `radius`, and run long simulations in
-  one `cs2_run_simulation` call instead of short checks. Routine reviews can go to the `cs2-mayor` subagent on a
-  cheaper model so the main conversation stays short.
-- Zone with `cs2_zone_area` circles of radius 90–110 placed between the streets. Keep circles away from
-  frontages you want left empty; zoning only fills unoccupied cells.
-- Segment ids change when a road is split. If `cs2_place_roadside` says "provide ?road=", look the segment up again
-  with `cs2_road_graph` or `cs2_list_roads`.
-- On a road heading +z, `side: right` is +x. On a road heading +x, `side: right` is −z.
-- Wind turbines need about 140 m between them, and their rotors (60 m radius) must stay inside owned tiles.
-  Roads cannot pass under a rotor.
-- `cs2_gridmap` and `cs2_terrain` return files too large to read. Parse the saved JSON with a short
-  `python -I -c` script and print only the region you need.
-- New medium-density lots can take 8+ in-game hours to start building.
-- The MCP cannot attach a power line to a building, so the outside high-voltage line stays unconnected.
-- Milestone and signature-building popups pause the game. Only the user can close them unless `cs2_dismiss_popups` is loaded.
+The full list is PLAYBOOK section 10. The ones that bite most often:
+- One build call at a time, or `cs2_batch` (upgrade, replace, zone, connect, demolish, junction, roadside,
+  stop, place) for several.
+- `cs2_connect_road` with `snap: 3` keeps exact coordinates.
+- Placement replaces whatever is on the lot; check `cs2_buildings_near` and try sites one at a time.
+- Entity and segment ids change on load and when a road is split; look them up again.
+- Tool replies are compact JSON (`CS2MCP_VERBOSE=1` for the old output). Filter `cs2_road_graph` by
+  `street`/`query`/small `radius`. Routine reviews can go to the `cs2-mayor` subagent on a cheaper model.
 
-## Open problem to pick up (as of the last review)
+## Build standard for agents (the user requires this; city integrity must not drop)
 
-The industrial smoke plume now drifts north-northeast over the office district, the west hill homes, the civic row
-on the x=2220 avenue and the western half of the original grid (to about x 2800). Happiness fell to 44.
-The user approved moving industry downwind. Stage 1 is built: a north industrial district at x 1940–2400,
-z 3482–3810 (about 1,900 cells) on the 2220 avenue. Stage 2 has started: the industrial strip nearest homes (x 1920–2200,
-z 1620–2100) was rezoned to Office Low. Rezoning occupied cells works: the game condemns and clears the old
-buildings. Next review: confirm offices replaced the factories, check the north district is filling, check the
-tax hit, re-measure the plume, and rezone the next strip west only if the plume still covers homes. Check the `cs2-sf-city-progress` memory for the latest status.
+Every builder agent follows these, and reports violations it could not avoid:
+1. **Grid pitch.** Parallel Small streets exactly 112 m apart (48+48+16); Small next to Medium 116 m;
+   Medium next to Medium 120 m. Align new rows/columns with the neighbouring district's coordinates.
+2. **Blocks** 200–280 m long; every street joins at both ends (no dead ends, no stubs). T-junctions ≥ 60 m
+   apart; no junctions within 30 m of each other.
+3. **Hierarchy.** Small → Medium collector → arterial → highway. Only collectors/arterials meet arterials;
+   never connect local streets to highways.
+4. **Zoning.** Zone only frontage of finished roads, with circles that stay inside one block (radius ≤ half
+   the block depth) so one lot never gets two zone types. One zone type per block face; commercial/mixed on
+   collectors/arterials, residential inside, office/industry as buffers. Never zone across an avenue.
+   Check `cs2_zoning` before rezoning occupied cells.
+5. **Services** placed flush with `cs2_place_roadside`, packed so lot widths fill frontage.
+6. **Utilities & safety.** Before removing a road, check it isn't the only power/water link. Turbines only
+   via `cs2_place_roadside`, 140 m apart, 60 m rotor clearance from roads/tracks.
+7. **Transit at build time.** Each new district gets a bus/tram line linked to a rail or tram hub.
+8. **Verify before reporting.** Re-read `cs2_road_graph` for the area: no 1-segment nodes except deliberate
+   utility spurs, and no No Road Access / No Car Access / Not Connected warnings in the district.
+9. **Placement destroys what's on the lot.** Dry runs don't detect it. Check `cs2_buildings_near` first and
+   never batch several candidate sites for one building.
